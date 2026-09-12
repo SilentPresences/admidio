@@ -15,6 +15,7 @@
  *                   3  : Show active and inactive contacts for all organizations (only Admin)
  ***********************************************************************************************
  */
+use Admidio\Hooks\Hooks;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Roles\Entity\ListConfiguration;
@@ -40,11 +41,11 @@ try {
     $contactsListConfig = new ListConfiguration($gDb, $gSettingsManager->getInt('contacts_list_configuration'));
     $_SESSION['contacts_list_configuration'] = $contactsListConfig;
 
-    // Link mit dem alle Benutzer oder nur Mitglieder angezeigt werden setzen
-    $page = PagePresenter::withHtmlIDAndHeadline('admidio-contacts', $headline);
+    // Set a link to display all users or only members
+    $page = PagePresenter::withHtmlIDAndHeadline('adm_contacts', $headline);
     $page->setContentFullWidth();
 
-    if ($gCurrentUser->isAdministratorUsers()) {
+    if ($gCurrentUser->isAdministratorUsers() || $gCurrentUser->isAllowedToViewUsers()) {
         $page->addJavascript('
             $("#menu_item_contacts_create_contact").attr("href", "javascript:void(0);");
             $("#menu_item_contacts_create_contact").attr("data-href", "' . ADMIDIO_URL . FOLDER_MODULES . '/contacts/contacts_new.php");
@@ -77,19 +78,24 @@ try {
         );
 
 
-        if ($gCurrentUser->isAdministrator() && $gSettingsManager->getBool('contacts_show_all')) {
-            $selectBoxValues = array(
-                '0' => array('0', $gL10n->get('SYS_ACTIVE_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION')),
-                '1' => array('1', $gL10n->get('SYS_FORMER_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION')),
-                '2' => array('2', $gL10n->get('SYS_ALL_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION')),
-                '3' => array('3', $gL10n->get('SYS_ALL_CONTACTS'), $gL10n->get('SYS_ALL_ORGANIZATIONS'))
-            );
-        } else {
-            $selectBoxValues = array(
-                '0' => $gL10n->get('SYS_ACTIVE_CONTACTS'),
-                '1' => $gL10n->get('SYS_FORMER_CONTACTS'),
-                '2' => $gL10n->get('SYS_ALL_CONTACTS')
-            );
+        $selectBoxValues = array(
+            '0' => array('0', $gL10n->get('SYS_ACTIVE_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION')),
+            '1' => array('1', $gL10n->get('SYS_FORMER_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION')),
+            '2' => array('2', $gL10n->get('SYS_ALL_CONTACTS'), $gL10n->get('SYS_CURRENT_ORGANIZATION'))
+        );
+
+        $sharedOrganizationIds = $gCurrentOrganization->getSharedUsersOrganizationIds();
+
+        $showAllOrganizationsFilter = $gCurrentUser->isAdministrator()
+            && $gSettingsManager->getBool('contacts_show_all')
+            && count($sharedOrganizationIds) > 1;
+
+        if (!$showAllOrganizationsFilter && $getMembersShowFilter === 3) {
+            $getMembersShowFilter = 2;
+        }
+
+        if ($showAllOrganizationsFilter) {
+            $selectBoxValues['3'] = array('3', $gL10n->get('SYS_ALL_CONTACTS'), $gL10n->get('SYS_ALL_ORGANIZATIONS'));
         }
 
         // filter all items
@@ -143,6 +149,17 @@ try {
     }
 
     $columnHeading[] = '&nbsp;';
+
+    // list_columns may relabel a column, but not add or remove one: contacts_data.php still builds
+    // each row by position, and there is no shared list/column pipeline yet to keep the two in step
+    // (see HOOKS_PLAN.md §2.7). A filter that changes the count would misalign every row silently,
+    // so the count is enforced here instead of trusted.
+    $filteredColumnHeading = Hooks::applyTypedFilters('list_columns', $columnHeading, 'contacts');
+    if (count($filteredColumnHeading) !== count($columnHeading)) {
+        throw new \UnexpectedValueException('A list_columns filter for "contacts" changed the number of columns.');
+    }
+    $columnHeading = $filteredColumnHeading;
+
     $columnAlignment = $contactsListConfig->getColumnAlignments();
     if (($getMembersShowFilter < 3) && $gCurrentUser->isAdministratorUsers()) {
         array_unshift($columnAlignment, 'center', 'start', 'start');

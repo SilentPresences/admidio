@@ -4,6 +4,7 @@ namespace Admidio\UI\Presenter;
 
 // Admidio namespaces
 use Admidio\Categories\Service\CategoryService;
+use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
@@ -70,10 +71,14 @@ class InventoryPresenter extends PagePresenter
 
 
     /**
-     * Constructor creates the page object and initialized all parameters.
+     * Constructor creates the inventory presenter and initializes all parameters.
+     *
+     * @param bool $initializePage If **false**, only initialize the inventory data needed by
+     *                             non-HTML consumers such as ExportService. This deliberately
+     *                             avoids the web-only PagePresenter bootstrap (theme/session).
      * @throws Exception
      */
-    public function __construct()
+    public function __construct(bool $initializePage = true)
     {
         global $gDb, $gCurrentOrgId;
 
@@ -93,387 +98,45 @@ class InventoryPresenter extends PagePresenter
 
         $this->categoryService = new CategoryService($gDb, 'IVT');
 
-        parent::__construct($this->getFilterCategoryUUID);
+        if ($initializePage) {
+            parent::__construct($this->getFilterCategoryUUID);
+        }
     }
 
     /**
-     * Create a functions menu and a filter navbar.
-     * @return void
-     * @throws Exception
-     */
-    protected function createHeader(): void
-    {
-        global $gCurrentUser, $gL10n, $gDb, $gCurrentOrgId, $gProfileFields;
-
-        if ($gCurrentUser->isAdministratorInventory()) {
-            // show link to view inventory history
-            ChangelogService::displayHistoryButton($this, 'inventory', 'inventory_fields,inventory_field_select_options,inventory_items,inventory_item_data,inventory_item_borrow_data');
-
-            // show link to create new item
-            $this->addPageFunctionsMenuItem(
-                'menu_item_inventory_create_item',
-                $gL10n->get('SYS_INVENTORY_ITEM_CREATE'),
-                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'item_edit')),
-                'bi-plus-circle-fill'
-            );
-        }
-
-        if ($gCurrentUser->isAdministratorInventory()) {
-            // link to print overlay and exports
-            $this->addPageFunctionsMenuItem(
-                'menu_item_lists_print_view',
-                $gL10n->get('SYS_PRINT_PREVIEW'),
-                'javascript:void(0);',
-                'bi-printer-fill'
-            );
-
-            // dropdown menu for export options
-            $this->createExportDropdown();
-
-            // show link to import items
-            $this->addPageFunctionsMenuItem(
-                'menu_item_inventory_import_items',
-                $gL10n->get('SYS_INVENTORY_IMPORT_ITEMS'),
-                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'import_file_selection')),
-                'bi-upload'
-            );
-
-            // show link to maintain fields
-            $this->addPageFunctionsMenuItem(
-                'menu_item_inventory_item_fields',
-                $gL10n->get('SYS_INVENTORY_ITEMFIELDS_EDIT'),
-                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'field_list')),
-                'bi-ui-radios'
-            );
-        }
-
-        // filter form
-        $form = new FormPresenter(
-            'adm_navbar_filter_form',
-            'sys-template-parts/form.filter.tpl',
-            '',
-            $this,
-            array('type' => 'navbar', 'setFocus' => false)
-        );
-
-        $initialFilter = addslashes($this->getFilterString);
-        $printBaseUrl = SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'print_preview'));
-
-        $this->addJavascript('
-            // only submit non-empty filter values
-            $("#items_filter_category, #items_filter_keeper, #items_filter_last_receiver, #items_filter_status").on("change", function(){
-                var form = $("#adm_navbar_filter_form");
-
-                // Text-Filter
-                var textFilterInput = $("#items_filter_string");
-                if (textFilterInput.val() === "") {
-                    textFilterInput.removeAttr("name");
-                } else {
-                    textFilterInput.attr("name", "items_filter_string");
-                }
-
-                // Category
-                var categorySelect = $("#items_filter_category");
-                if (categorySelect.val() === "") {
-                    categorySelect.removeAttr("name");
-                } else {
-                    categorySelect.attr("name", "items_filter_category");
-                }
-
-                // Keeper
-                var keeperSelect = $("#items_filter_keeper");
-                if (keeperSelect.val() === "") {
-                    keeperSelect.removeAttr("name");
-                } else {
-                    keeperSelect.attr("name", "items_filter_keeper");
-                }
-
-                // Last Receiver
-                var lastReceiverSelect = $("#items_filter_last_receiver");
-                if (lastReceiverSelect.val() === "") {
-                    lastReceiverSelect.removeAttr("name");
-                } else {
-                    lastReceiverSelect.attr("name", "items_filter_last_receiver");
-                }
-
-                // items status filter
-                var itemsSelect = $("#items_filter_status");
-                if (itemsSelect.val() === "") {
-                    itemsSelect.removeAttr("name");
-                } else {
-                    itemsSelect.attr("name", "items_filter_status");
-                }
-
-                form.submit();
-            });
-
-            var table = $("#adm_inventory_table");
-
-            table.one("init.dt", function() {
-                // fill the DataTable filter string with the current search value
-                var tableApi = table.DataTable();
-                var initFilter = "' . $initialFilter . '";
-                if (initFilter !== "") {
-                    tableApi.search(initFilter).draw();
-                }
-
-                // set the filter string in the form when the DataTable is searched
-                table.on("search.dt", function(){
-                var textFilter = tableApi.search() || "";
-                $("#adm_navbar_filter_form")
-                    .find("input[name=\'items_filter_string\']")
-                    .val(textFilter);
-                });
-            });
-
-            // create the print view link with the current filter values
-            $("#menu_item_lists_print_view").off("click").on("click", function(e){
-                e.preventDefault();
-                var textFilter     = $("#items_filter_string").val()  || "";
-                var category     = $("#items_filter_category").val()  || "";
-                var keeper  = $("#items_filter_keeper").val()         || "";
-                var lastReceiver  = $("#items_filter_last_receiver").val()         || "";
-                var filterItems = $("#items_filter_status").val()     || "";
-                var url = "' . $printBaseUrl . '"
-                        + "&items_filter_string="   + encodeURIComponent(textFilter)
-                        + "&items_filter_category=" + encodeURIComponent(category)
-                        + "&items_filter_keeper="   + encodeURIComponent(keeper)
-                        + "&items_filter_last_receiver="   + encodeURIComponent(lastReceiver)
-                        + "&items_filter_status="   + encodeURIComponent(filterItems);
-
-                window.open(url, "_blank");
-            });',
-            true
-        );
-
-        // filter string (hidden)
-        $form->addInput('items_filter_string', $gL10n->get('SYS_FILTER'), "", array('property' => FormPresenter::FIELD_HIDDEN));
-
-        // filter category
-        $form->addSelectBoxForCategories(
-            'items_filter_category',
-            $gL10n->get('SYS_CATEGORY'),
-            $gDb,
-            'IVT',
-            FormPresenter::SELECT_BOX_MODUS_FILTER,
-            array('defaultValue' => $this->getFilterCategoryUUID)
-        );
-
-        // read all keeper
-        $sql = 'SELECT DISTINCT ind_value,
-            CASE
-                WHEN ind_value = -1 THEN \'n/a\'
-                ELSE CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
-            END as keeper_name
-            FROM ' . TBL_INVENTORY_ITEM_DATA . '
-            INNER JOIN ' . TBL_INVENTORY_FIELDS . '
-                ON inf_id = ind_inf_id
-            LEFT JOIN ' . TBL_USER_DATA . ' as last_name
-                ON last_name.usd_usr_id = ind_value
-                AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
-            LEFT JOIN ' . TBL_USER_DATA . ' as first_name
-                ON first_name.usd_usr_id = ind_value
-                AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
-            WHERE (inf_org_id  = ' . $gCurrentOrgId . '
-                OR inf_org_id IS NULL)
-            AND inf_name_intern = \'KEEPER\'
-            ORDER BY keeper_name;';
-
-        // filter keeper
-        $form->addSelectBoxFromSql(
-            'items_filter_keeper',
-            $gL10n->get('SYS_INVENTORY_KEEPER'),
-            $gDb,
-            $sql,
-            array(
-                'defaultValue' => $this->getFilterKeeper,
-                'showContextDependentFirstEntry' => true
-            )
-        );
-
-        // get all last receivers
-        $sql = 'SELECT DISTINCT borrowData.inb_last_receiver,
-            CASE
-                WHEN borrowData.inb_last_receiver = \'-1\'
-                    THEN \'n/a\'
-                WHEN last_name.usd_value IS NOT NULL AND last_name.usd_value <> \'\' AND first_name.usd_value IS NOT NULL AND first_name.usd_value <> \'\'
-                    THEN CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
-                ELSE
-                    borrowData.inb_last_receiver
-            END AS receiver_name
-            FROM ' . TBL_INVENTORY_ITEM_BORROW_DATA . ' AS borrowData
-            INNER JOIN ' . TBL_INVENTORY_FIELDS . ' AS fields
-                ON fields.inf_name_intern = \'LAST_RECEIVER\'
-            AND (fields.inf_org_id = ' . $gCurrentOrgId . ' OR fields.inf_org_id IS NULL)
-            LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
-                ON last_name.usd_usr_id  = borrowData.inb_last_receiver
-            AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
-            LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
-                ON first_name.usd_usr_id  = borrowData.inb_last_receiver
-            AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
-            WHERE fields.inf_name_intern = \'LAST_RECEIVER\'
-            ORDER BY receiver_name;';
-
-        // filter last receiver
-        $form->addSelectBoxFromSql(
-            'items_filter_last_receiver',
-            $gL10n->get('SYS_INVENTORY_LAST_RECEIVER'),
-            $gDb,
-            $sql,
-            array(
-                'defaultValue' => $this->getFilterLastReceiver,
-                'showContextDependentFirstEntry' => true
-            )
-        );
-
-        // get the status options for the filter
-        $option = new SelectOptions($gDb, $this->itemsData->getProperty('STATUS', 'inf_id'));
-        $values = $option->getAllOptions();
-        // add select all items to select box values as first entry
-        $selectBoxValues = array('0' => $gL10n->get('SYS_ALL'));
-        foreach ($values as $value) {
-            $selectBoxValues[$value['id']] = $value['value'] . ($value['obsolete'] ? ' (' . $gL10n->get('SYS_DELETED_ENTRY') . ')' : '');
-        }
-
-        // filter all items
-        $form->addSelectBox(
-            'items_filter_status',
-            $gL10n->get('SYS_INVENTORY_STATUS'),
-            $selectBoxValues,
-            array(
-                'defaultValue' => $this->getFilterStatus,
-                'showContextDependentFirstEntry' => false
-            )
-        );
-
-        $form->addToHtmlPage();
-    }
-
-    /**
-     * Create the export dropdown menu for the inventory items.
-     * This method adds various export options to the page functions menu.
+     * Check if the current user is the keeper of an item.
+     * This method checks if the current user is listed as a keeper in the inventory item data.
      *
-     * @return void
+     * @param int $itemId Optional item ID to check for a specific item. If 0, checks for any item.
+     * @return bool Returns true if the current user is a keeper, false otherwise.
      * @throws Exception
      */
-    protected function createExportDropdown(): void
+    public static function isCurrentUserKeeper(int $itemId = 0): bool
     {
-        global $gL10n;
-        // create the export dropdown menu
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_export',
-            $gL10n->get('SYS_EXPORT'),
-            '#',
-            'bi-download'
-        );
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_xlsx',
-            $gL10n->get('SYS_MICROSOFT_EXCEL') . ' (*.xlsx)',
-            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
-                    'items_filter_string' => $this->getFilterString,
-                    'items_filter_category' => $this->getFilterCategoryUUID,
-                    'items_filter_keeper' => $this->getFilterKeeper,
-                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
-                    'items_filter_status' => $this->getFilterStatus,
-                    'mode' => 'print_xlsx'
-                )
-            ),
-            'bi-filetype-xlsx',
-            'menu_item_lists_export'
-        );
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_ods',
-            $gL10n->get('SYS_ODF_SPREADSHEET'),
-            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
-                    'items_filter_string' => $this->getFilterString,
-                    'items_filter_category' => $this->getFilterCategoryUUID,
-                    'items_filter_keeper' => $this->getFilterKeeper,
-                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
-                    'items_filter_status' => $this->getFilterStatus,
-                    'mode' => 'print_ods'
-                )
-            ),
-            'bi-file-earmark-spreadsheet',
-            'menu_item_lists_export'
-        );
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_csv',
-            $gL10n->get('SYS_CSV') . ' (' . $gL10n->get('SYS_UTF8') . ')',
-            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
-                    'items_filter_string' => $this->getFilterString,
-                    'items_filter_category' => $this->getFilterCategoryUUID,
-                    'items_filter_keeper' => $this->getFilterKeeper,
-                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
-                    'items_filter_status' => $this->getFilterStatus,
-                    'mode' => 'print_csv-oo'
-                )
-            ),
-            'bi-filetype-csv',
-            'menu_item_lists_export'
-        );
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_pdf',
-            $gL10n->get('SYS_PDF') . ' (' . $gL10n->get('SYS_PORTRAIT') . ')',
-            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
-                    'items_filter_string' => $this->getFilterString,
-                    'items_filter_category' => $this->getFilterCategoryUUID,
-                    'items_filter_keeper' => $this->getFilterKeeper,
-                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
-                    'items_filter_status' => $this->getFilterStatus,
-                    'mode' => 'print_pdf'
-                )
-            ),
-            'bi-filetype-pdf',
-            'menu_item_lists_export'
-        );
-        $this->addPageFunctionsMenuItem(
-            'menu_item_lists_pdfl',
-            $gL10n->get('SYS_PDF') . ' (' . $gL10n->get('SYS_LANDSCAPE') . ')',
-            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
-                    'items_filter_string' => $this->getFilterString,
-                    'items_filter_category' => $this->getFilterCategoryUUID,
-                    'items_filter_keeper' => $this->getFilterKeeper,
-                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
-                    'items_filter_status' => $this->getFilterStatus,
-                    'mode' => 'print_pdfl'
-                )
-            ),
-            'bi-filetype-pdf',
-            'menu_item_lists_export'
-        );
+        global $gCurrentUser, $gDb, $gCurrentOrgId;
 
-        // add javascript for the export dropdown menu to change the URL of the export link
-        $this->addJavascript('
-            var buttons = {
-                xlsx:    "print_xlsx",
-                ods:     "print_ods",
-                csv:     "print_csv-oo",
-                pdf:     "print_pdf",
-                pdfl:    "print_pdfl"
-            };
+        $sql = 'SELECT COUNT(*) as count FROM ' . TBL_INVENTORY_ITEM_DATA . ' WHERE ind_value = ? AND ind_inf_id = ?';
+        // read the field id of the keeper field
+        $sqlKeeperFieldId = 'SELECT inf_id FROM ' . TBL_INVENTORY_FIELDS . ' WHERE inf_name_intern = \'KEEPER\' AND (inf_org_id = ? OR inf_org_id IS NULL) LIMIT 1';
+        $resultKeeperFieldId = $gDb->queryPrepared($sqlKeeperFieldId, array($gCurrentOrgId));
+        $rowKeeperFieldId = $resultKeeperFieldId->fetch();
+        if ($rowKeeperFieldId === false) {
+            return false;
+        }
+        $rowKeeperFieldId = $rowKeeperFieldId['inf_id'];
+        $params = array($gCurrentUser->getValue('usr_id'), $rowKeeperFieldId);
 
-            $.each(buttons, function(suffix, modeValue){
-                var selector = "#menu_item_lists_" + suffix;
-                $(selector).on("click", function(e){
-                    var textFilter = $("#items_filter_string").val()      || "";
-                    var category   = $("#items_filter_category").val()    || "";
-                    var keeper     = $("#items_filter_keeper").val()      || "";
-                    var lastReceiver = $("#items_filter_last_receiver").val()      || "";
-                    var filterItems = $("#items_filter_status").val()     || "";
-                    var base = this.href.split("?")[0];
-                    var qs = [
-                    "items_filter_string="   + encodeURIComponent(textFilter),
-                    "items_filter_category=" + encodeURIComponent(category),
-                    "items_filter_keeper="   + encodeURIComponent(keeper),
-                    "items_filter_last_receiver=" + encodeURIComponent(lastReceiver),
-                    "items_filter_status="   + encodeURIComponent(filterItems),
-                    "mode="                  + modeValue
-                    ].join("&");
-                    this.href = base + "?" + qs;
-                });
-            });',
-            true
-        );
+        if ($itemId > 0) {
+            $sql .= ' AND ind_ini_id = ?';
+            $params[] = $itemId;
+        }
+        $result = $gDb->queryPrepared($sql, $params);
+        $row = $result->fetch();
+        if ($row['count'] > 0) {
+            return true;
+        }
+        return false;
+
     }
 
     /**
@@ -490,11 +153,20 @@ class InventoryPresenter extends PagePresenter
 
         if (!$this->printView) {
             $this->createHeader();
-            $templateData = $this->prepareData('html');
+            // we only need the table headers/column definition for client-side DataTables init
+            // actual row data will be provided by server-side processing
+            $templateData = $this->prepareTableDefinition('html');
 
             // initialize and set the parameter for DataTables
             $dataTables = new DataTables($this, 'adm_inventory_table');
-
+            // use a dedicated server-side endpoint for DataTables similar to modules/messages/messages_data.php
+            $dataTables->setServerSideProcessing(SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory/inventory_data.php', array(
+                'items_filter_string' => $this->getFilterString,
+                'items_filter_category' => $this->getFilterCategoryUUID,
+                'items_filter_keeper' => $this->getFilterKeeper,
+                'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                'items_filter_status' => $this->getFilterStatus
+            )));
             // callback function to update the table on deletion of an item or reinstantiation of a retired item
             $this->addJavascript('
                 function refreshInventoryTable() {
@@ -684,7 +356,7 @@ class InventoryPresenter extends PagePresenter
             }
             $dataTables->setRowsPerPage($gSettingsManager->getInt('inventory_items_per_page'));
             $dataTables->setColumnAlignByArray($templateData['column_align']);
-            $dataTables->createJavascript(count($templateData['rows']), count($templateData['headers']));
+            $dataTables->createJavascript(0, count($templateData['headers']));
         } else {
             $templateData = $this->prepareData('print');
         }
@@ -693,6 +365,509 @@ class InventoryPresenter extends PagePresenter
         $this->smarty->assign('print', $this->printView);
         $this->smarty->assign('editRights', $gCurrentUser->isAdministratorInventory() || $this->isKeeperAuthorizedToEdit($gCurrentUserId));
         $this->pageContent .= $this->smarty->fetch('modules/inventory.list.tpl');
+    }
+
+    /**
+     * Create a functions menu and a filter navbar.
+     * @return void
+     * @throws Exception
+     */
+    protected function createHeader(): void
+    {
+        global $gCurrentUser, $gL10n, $gDb, $gCurrentOrgId, $gProfileFields;
+
+        if ($gCurrentUser->isAdministratorInventory()) {
+            // show link to view inventory history
+            ChangelogService::displayHistoryButton($this, 'inventory', 'inventory_fields,inventory_field_select_options,inventory_items,inventory_item_data,inventory_item_borrow_data');
+
+            // show link to create new item
+            $this->addPageFunctionsMenuItem(
+                'menu_item_inventory_create_item',
+                $gL10n->get('SYS_INVENTORY_ITEM_CREATE'),
+                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'item_edit')),
+                'bi-plus-circle-fill'
+            );
+        }
+
+        if ($gCurrentUser->isAdministratorInventory()) {
+            // link to print overlay and exports
+            $this->addPageFunctionsMenuItem(
+                'menu_item_lists_print_view',
+                $gL10n->get('SYS_PRINT_PREVIEW'),
+                'javascript:void(0);',
+                'bi-printer-fill'
+            );
+
+            // dropdown menu for export options
+            $this->createExportDropdown();
+
+            // show link to import items
+            $this->addPageFunctionsMenuItem(
+                'menu_item_inventory_import_items',
+                $gL10n->get('SYS_INVENTORY_IMPORT_ITEMS'),
+                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'import_file_selection')),
+                'bi-upload'
+            );
+
+            // show link to maintain fields
+            $this->addPageFunctionsMenuItem(
+                'menu_item_inventory_item_fields',
+                $gL10n->get('SYS_INVENTORY_ITEMFIELDS_EDIT'),
+                SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'field_list')),
+                'bi-ui-radios'
+            );
+        }
+
+        // filter form
+        $form = new FormPresenter(
+            'adm_navbar_filter_form',
+            'sys-template-parts/form.filter.tpl',
+            '',
+            $this,
+            array('type' => 'navbar', 'setFocus' => false)
+        );
+
+        $initialFilter = addslashes($this->getFilterString);
+        $printBaseUrl = SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'print_preview'));
+
+        $this->addJavascript('
+            // only submit non-empty filter values
+            $("#items_filter_category, #items_filter_keeper, #items_filter_last_receiver, #items_filter_status").on("change", function(){
+                var form = $("#adm_navbar_filter_form");
+
+                // Text-Filter
+                var textFilterInput = $("#items_filter_string");
+                if (textFilterInput.val() === "") {
+                    textFilterInput.removeAttr("name");
+                } else {
+                    textFilterInput.attr("name", "items_filter_string");
+                }
+
+                // Category
+                var categorySelect = $("#items_filter_category");
+                if (categorySelect.val() === "") {
+                    categorySelect.removeAttr("name");
+                } else {
+                    categorySelect.attr("name", "items_filter_category");
+                }
+
+                // Keeper
+                var keeperSelect = $("#items_filter_keeper");
+                if (keeperSelect.val() === "") {
+                    keeperSelect.removeAttr("name");
+                } else {
+                    keeperSelect.attr("name", "items_filter_keeper");
+                }
+
+                // Last Receiver
+                var lastReceiverSelect = $("#items_filter_last_receiver");
+                if (lastReceiverSelect.val() === "") {
+                    lastReceiverSelect.removeAttr("name");
+                } else {
+                    lastReceiverSelect.attr("name", "items_filter_last_receiver");
+                }
+
+                // items status filter
+                var itemsSelect = $("#items_filter_status");
+                if (itemsSelect.val() === "") {
+                    itemsSelect.removeAttr("name");
+                } else {
+                    itemsSelect.attr("name", "items_filter_status");
+                }
+
+                form.submit();
+            });
+
+            var table = $("#adm_inventory_table");
+
+            table.one("init.dt", function() {
+                // fill the DataTable filter string with the current search value
+                var tableApi = table.DataTable();
+                var initFilter = "' . $initialFilter . '";
+                if (initFilter !== "") {
+                    tableApi.search(initFilter).draw();
+                }
+
+                // set the filter string in the form when the DataTable is searched
+                table.on("search.dt", function(){
+                var textFilter = tableApi.search() || "";
+                $("#adm_navbar_filter_form")
+                    .find("input[name=\'items_filter_string\']")
+                    .val(textFilter);
+                });
+            });
+
+            // create the print view link with the current filter values
+            $("#menu_item_lists_print_view").off("click").on("click", function(e){
+                e.preventDefault();
+                var textFilter     = $("#items_filter_string").val()  || "";
+                var category     = $("#items_filter_category").val()  || "";
+                var keeper  = $("#items_filter_keeper").val()         || "";
+                var lastReceiver  = $("#items_filter_last_receiver").val()         || "";
+                var filterItems = $("#items_filter_status").val()     || "";
+                var url = "' . $printBaseUrl . '"
+                        + "&items_filter_string="   + encodeURIComponent(textFilter)
+                        + "&items_filter_category=" + encodeURIComponent(category)
+                        + "&items_filter_keeper="   + encodeURIComponent(keeper)
+                        + "&items_filter_last_receiver="   + encodeURIComponent(lastReceiver)
+                        + "&items_filter_status="   + encodeURIComponent(filterItems);
+
+                window.open(url, "_blank");
+            });',
+            true
+        );
+
+        // filter string (hidden)
+        $form->addInput('items_filter_string', $gL10n->get('SYS_FILTER'), "", array('property' => FormPresenter::FIELD_HIDDEN));
+
+        // filter category
+        $form->addSelectBoxForCategories(
+            'items_filter_category',
+            $gL10n->get('SYS_CATEGORY'),
+            $gDb,
+            'IVT',
+            FormPresenter::SELECT_BOX_MODUS_FILTER,
+            array('defaultValue' => $this->getFilterCategoryUUID)
+        );
+
+        // read all keeper
+        if (DB_TYPE === Database::PDO_ENGINE_PGSQL) {
+            $sql = 'SELECT DISTINCT ind_value,
+            CASE
+                WHEN ind_value = \'-1\' THEN \'n/a\'
+                ELSE CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
+            END as keeper_name
+            FROM ' . TBL_INVENTORY_ITEM_DATA . '
+            INNER JOIN ' . TBL_INVENTORY_FIELDS . '
+                ON inf_id = ind_inf_id
+            LEFT JOIN ' . TBL_USER_DATA . ' as last_name
+                ON CAST(last_name.usd_usr_id AS VARCHAR(255)) = ind_value
+                AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
+            LEFT JOIN ' . TBL_USER_DATA . ' as first_name
+                ON CAST(first_name.usd_usr_id AS VARCHAR(255)) = ind_value
+                AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
+            WHERE (inf_org_id  = ' . $gCurrentOrgId . '
+                OR inf_org_id IS NULL)
+            AND inf_name_intern = \'KEEPER\'
+            ORDER BY keeper_name;';
+        } else {
+            $sql = 'SELECT DISTINCT ind_value,
+            CASE
+                WHEN ind_value = \'-1\' THEN \'n/a\'
+                ELSE CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
+            END as keeper_name
+            FROM ' . TBL_INVENTORY_ITEM_DATA . '
+            INNER JOIN ' . TBL_INVENTORY_FIELDS . '
+                ON inf_id = ind_inf_id
+            LEFT JOIN ' . TBL_USER_DATA . ' as last_name
+                ON CAST(last_name.usd_usr_id AS CHAR) COLLATE utf8mb3_unicode_ci = ind_value
+                AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
+            LEFT JOIN ' . TBL_USER_DATA . ' as first_name
+                ON CAST(first_name.usd_usr_id AS CHAR) COLLATE utf8mb3_unicode_ci = ind_value
+                AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
+            WHERE (inf_org_id  = ' . $gCurrentOrgId . '
+                OR inf_org_id IS NULL)
+            AND inf_name_intern = \'KEEPER\'
+            ORDER BY keeper_name;';
+        }
+
+        // filter keeper
+        $form->addSelectBoxFromSql(
+            'items_filter_keeper',
+            $gL10n->get('SYS_INVENTORY_KEEPER'),
+            $gDb,
+            $sql,
+            array(
+                'defaultValue' => $this->getFilterKeeper,
+                'showContextDependentFirstEntry' => true
+            )
+        );
+
+        // get all last receivers
+        if (DB_TYPE === Database::PDO_ENGINE_PGSQL) {
+            $sql = 'SELECT DISTINCT borrowData.inb_last_receiver,
+            CASE
+                WHEN borrowData.inb_last_receiver = \'-1\'
+                    THEN \'n/a\'
+                WHEN last_name.usd_value IS NOT NULL AND last_name.usd_value <> \'\' AND first_name.usd_value IS NOT NULL AND first_name.usd_value <> \'\'
+                    THEN CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
+                ELSE
+                    borrowData.inb_last_receiver
+            END AS receiver_name
+            FROM ' . TBL_INVENTORY_ITEM_BORROW_DATA . ' AS borrowData
+            INNER JOIN ' . TBL_INVENTORY_FIELDS . ' AS fields
+                ON fields.inf_name_intern = \'LAST_RECEIVER\'
+            AND (fields.inf_org_id = ' . $gCurrentOrgId . ' OR fields.inf_org_id IS NULL)
+            LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
+                ON CAST(last_name.usd_usr_id AS VARCHAR(255)) = borrowData.inb_last_receiver
+            AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
+            LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
+                ON CAST(first_name.usd_usr_id AS VARCHAR(255)) = borrowData.inb_last_receiver
+            AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
+            WHERE fields.inf_name_intern = \'LAST_RECEIVER\'
+            ORDER BY receiver_name;';
+        } else {
+            $sql = 'SELECT DISTINCT borrowData.inb_last_receiver,
+            CASE
+                WHEN borrowData.inb_last_receiver = \'-1\'
+                    THEN \'n/a\'
+                WHEN last_name.usd_value IS NOT NULL AND last_name.usd_value <> \'\' AND first_name.usd_value IS NOT NULL AND first_name.usd_value <> \'\'
+                    THEN CONCAT_WS(\', \', last_name.usd_value, first_name.usd_value)
+                ELSE
+                    borrowData.inb_last_receiver
+            END AS receiver_name
+            FROM ' . TBL_INVENTORY_ITEM_BORROW_DATA . ' AS borrowData
+            INNER JOIN ' . TBL_INVENTORY_FIELDS . ' AS fields
+                ON fields.inf_name_intern = \'LAST_RECEIVER\'
+            AND (fields.inf_org_id = ' . $gCurrentOrgId . ' OR fields.inf_org_id IS NULL)
+            LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
+                ON CAST(last_name.usd_usr_id AS CHAR) COLLATE utf8mb3_unicode_ci = borrowData.inb_last_receiver
+            AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
+            LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
+                ON CAST(first_name.usd_usr_id AS CHAR) COLLATE utf8mb3_unicode_ci = borrowData.inb_last_receiver
+            AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
+            WHERE fields.inf_name_intern = \'LAST_RECEIVER\'
+            ORDER BY receiver_name;';
+        }
+
+        // filter last receiver
+        $form->addSelectBoxFromSql(
+            'items_filter_last_receiver',
+            $gL10n->get('SYS_INVENTORY_LAST_RECEIVER'),
+            $gDb,
+            $sql,
+            array(
+                'defaultValue' => $this->getFilterLastReceiver,
+                'showContextDependentFirstEntry' => true
+            )
+        );
+
+        // get the status options for the filter
+        $option = new SelectOptions($gDb, $this->itemsData->getProperty('STATUS', 'inf_id'));
+        $values = $option->getAllOptions();
+        // add select all items to select box values as first entry
+        $selectBoxValues = array('0' => $gL10n->get('SYS_ALL'));
+        foreach ($values as $value) {
+            $selectBoxValues[$value['id']] = $value['value'] . ($value['obsolete'] ? ' (' . $gL10n->get('SYS_DELETED_ENTRY') . ')' : '');
+        }
+
+        // filter all items
+        $form->addSelectBox(
+            'items_filter_status',
+            $gL10n->get('SYS_INVENTORY_STATUS'),
+            $selectBoxValues,
+            array(
+                'defaultValue' => $this->getFilterStatus,
+                'showContextDependentFirstEntry' => false
+            )
+        );
+
+        $form->addToHtmlPage();
+    }
+
+    /**
+     * Create the export dropdown menu for the inventory items.
+     * This method adds various export options to the page functions menu.
+     *
+     * @return void
+     * @throws Exception
+     */
+    protected function createExportDropdown(): void
+    {
+        global $gL10n;
+        // create the export dropdown menu
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_export',
+            $gL10n->get('SYS_EXPORT'),
+            '#',
+            'bi-download'
+        );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_xlsx',
+            $gL10n->get('SYS_MICROSOFT_EXCEL') . ' (*.xlsx)',
+            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
+                    'items_filter_string' => $this->getFilterString,
+                    'items_filter_category' => $this->getFilterCategoryUUID,
+                    'items_filter_keeper' => $this->getFilterKeeper,
+                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                    'items_filter_status' => $this->getFilterStatus,
+                    'mode' => 'print_xlsx'
+                )
+            ),
+            'bi-filetype-xlsx',
+            'menu_item_lists_export'
+        );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_ods',
+            $gL10n->get('SYS_ODF_SPREADSHEET'),
+            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
+                    'items_filter_string' => $this->getFilterString,
+                    'items_filter_category' => $this->getFilterCategoryUUID,
+                    'items_filter_keeper' => $this->getFilterKeeper,
+                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                    'items_filter_status' => $this->getFilterStatus,
+                    'mode' => 'print_ods'
+                )
+            ),
+            'bi-file-earmark-spreadsheet',
+            'menu_item_lists_export'
+        );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_csv',
+            $gL10n->get('SYS_CSV') . ' (' . $gL10n->get('SYS_UTF8') . ')',
+            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
+                    'items_filter_string' => $this->getFilterString,
+                    'items_filter_category' => $this->getFilterCategoryUUID,
+                    'items_filter_keeper' => $this->getFilterKeeper,
+                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                    'items_filter_status' => $this->getFilterStatus,
+                    'mode' => 'print_csv-oo'
+                )
+            ),
+            'bi-filetype-csv',
+            'menu_item_lists_export'
+        );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_pdf',
+            $gL10n->get('SYS_PDF') . ' (' . $gL10n->get('SYS_PORTRAIT') . ')',
+            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
+                    'items_filter_string' => $this->getFilterString,
+                    'items_filter_category' => $this->getFilterCategoryUUID,
+                    'items_filter_keeper' => $this->getFilterKeeper,
+                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                    'items_filter_status' => $this->getFilterStatus,
+                    'mode' => 'print_pdf'
+                )
+            ),
+            'bi-filetype-pdf',
+            'menu_item_lists_export'
+        );
+        $this->addPageFunctionsMenuItem(
+            'menu_item_lists_pdfl',
+            $gL10n->get('SYS_PDF') . ' (' . $gL10n->get('SYS_LANDSCAPE') . ')',
+            SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array(
+                    'items_filter_string' => $this->getFilterString,
+                    'items_filter_category' => $this->getFilterCategoryUUID,
+                    'items_filter_keeper' => $this->getFilterKeeper,
+                    'items_filter_last_receiver' => $this->getFilterLastReceiver,
+                    'items_filter_status' => $this->getFilterStatus,
+                    'mode' => 'print_pdfl'
+                )
+            ),
+            'bi-filetype-pdf',
+            'menu_item_lists_export'
+        );
+
+        // add javascript for the export dropdown menu to change the URL of the export link
+        $this->addJavascript('
+            var buttons = {
+                xlsx:    "print_xlsx",
+                ods:     "print_ods",
+                csv:     "print_csv-oo",
+                pdf:     "print_pdf",
+                pdfl:    "print_pdfl"
+            };
+
+            $.each(buttons, function(suffix, modeValue){
+                var selector = "#menu_item_lists_" + suffix;
+                $(selector).on("click", function(e){
+                    var textFilter = $("#items_filter_string").val()      || "";
+                    var category   = $("#items_filter_category").val()    || "";
+                    var keeper     = $("#items_filter_keeper").val()      || "";
+                    var lastReceiver = $("#items_filter_last_receiver").val()      || "";
+                    var filterItems = $("#items_filter_status").val()     || "";
+                    var base = this.href.split("?")[0];
+                    var qs = [
+                    "items_filter_string="   + encodeURIComponent(textFilter),
+                    "items_filter_category=" + encodeURIComponent(category),
+                    "items_filter_keeper="   + encodeURIComponent(keeper),
+                    "items_filter_last_receiver=" + encodeURIComponent(lastReceiver),
+                    "items_filter_status="   + encodeURIComponent(filterItems),
+                    "mode="                  + modeValue
+                    ].join("&");
+                    this.href = base + "?" + qs;
+                });
+            });',
+            true
+        );
+    }
+
+    /**
+     * Prepare table definition (headers, column alignment and export headers) without building rows.
+     * This is useful for server-side processing where the server supplies the rows.
+     *
+     * @param string $mode
+     * @return array
+     * @throws Exception
+     */
+    public function prepareTableDefinition(string $mode = 'html'): array
+    {
+        global $gCurrentUser, $gL10n, $gDb, $gProfileFields, $gSettingsManager, $gCurrentUserId;
+
+        $columnAlign = array();
+        $headers = array();
+        $exportHeaders = array();
+
+        // initial checkbox header for HTML mode
+        if ($mode === 'html') {
+            $columnAlign[] = 'center';
+            $headers[] = '<input type="checkbox" id="select-all" data-bs-toggle="tooltip" data-bs-original-title="' . $gL10n->get('SYS_SELECT_ALL') . '"/>';
+        }
+
+        $columnNumber = 1;
+        foreach ($this->itemsData->getItemFields() as $itemField) {
+            $infNameIntern = $itemField->getValue('inf_name_intern');
+            if ($gSettingsManager->GetBool('inventory_items_disable_borrowing') && in_array($infNameIntern, $this->itemsData->borrowFieldNames)) {
+                continue;
+            }
+
+            // photo column for first column in html mode
+            if ($columnNumber === 1 && $mode === 'html' && $gSettingsManager->GetBool('inventory_item_picture_enabled')) {
+                $headers[] = '<span style="display:block; min-width:40px;">&nbsp;</span>';
+                $columnAlign[] = 'center';
+            }
+
+            // alignment by inf_type
+            switch ($this->itemsData->getProperty($infNameIntern, 'inf_type')) {
+                case 'CHECKBOX':
+                case 'RADIO_BUTTON':
+                case 'GENDER':
+                    $columnAlign[] = 'center';
+                    break;
+                case 'NUMBER':
+                case 'DECIMAL':
+                    $columnAlign[] = 'end';
+                    break;
+                default:
+                    $columnAlign[] = 'start';
+                    break;
+            }
+
+            $columnHeader = $this->itemsData->getProperty($infNameIntern, 'inf_name');
+            if (in_array($mode, ['csv', 'ods', 'xlsx'])) {
+                $exportHeaders[$columnHeader] = 'string';
+            } else {
+                $headers[] = $columnHeader;
+            }
+
+            $columnNumber++;
+        }
+
+        // decide if actions column is needed for html mode
+        if ($mode === 'html') {
+            if ($gCurrentUser->isAdministratorInventory() || $this->isKeeperAuthorizedToEdit($gCurrentUserId)) {
+                $columnAlign[] = 'end';
+                $headers[] = '<span style="display:block; min-width:40px;">&nbsp;</span>';
+            }
+        }
+
+        return array(
+            'headers' => $headers,
+            'export_headers' => $exportHeaders,
+            'column_align' => $columnAlign,
+            'rows' => array(),
+            'strikethroughs' => array()
+        );
     }
 
     /**
@@ -712,42 +887,6 @@ class InventoryPresenter extends PagePresenter
         }
 
         return false;
-    }
-
-    /**
-     * Check if the current user is the keeper of an item.
-     * This method checks if the current user is listed as a keeper in the inventory item data.
-     *
-     * @param int $itemId Optional item ID to check for a specific item. If 0, checks for any item.
-     * @return bool Returns true if the current user is a keeper, false otherwise.
-     * @throws Exception
-     */
-    public static function isCurrentUserKeeper(int $itemId = 0): bool
-    {
-        global $gCurrentUser, $gDb, $gCurrentOrgId;
-
-        $sql = 'SELECT COUNT(*) as count FROM ' . TBL_INVENTORY_ITEM_DATA . ' WHERE ind_value = ? AND ind_inf_id = ?';
-        // read the field id of the keeper field
-        $sqlKeeperFieldId = 'SELECT inf_id FROM ' . TBL_INVENTORY_FIELDS . ' WHERE inf_name_intern = \'KEEPER\' AND (inf_org_id = ? OR inf_org_id IS NULL) LIMIT 1';
-        $resultKeeperFieldId = $gDb->queryPrepared($sqlKeeperFieldId, array($gCurrentOrgId));
-        $rowKeeperFieldId = $resultKeeperFieldId->fetch();
-        if ($rowKeeperFieldId === false) {
-            return false;
-        }
-        $rowKeeperFieldId = $rowKeeperFieldId['inf_id'];
-        $params = array($gCurrentUser->getValue('usr_id'), $rowKeeperFieldId);
-
-        if ($itemId > 0) {
-            $sql .= ' AND ind_ini_id = ?';
-            $params[] = $itemId;
-        }
-        $result = $gDb->queryPrepared($sql, $params);
-        $row = $result->fetch();
-        if ($row['count'] > 0) {
-            return true;
-        }
-        return false;
-
     }
 
     /**
@@ -778,57 +917,10 @@ class InventoryPresenter extends PagePresenter
             'strikethroughs' => array()
         );
 
-        // Set default alignment and headers for the first column (abbreviation)
-        ($mode === 'html') ? $columnAlign[] = 'center' : $columnAlign = array();
-        $headers = ($mode === 'html') ? array(0 => '<input type="checkbox" id="select-all" data-bs-toggle="tooltip" data-bs-original-title="' . $gL10n->get('SYS_SELECT_ALL') . '"/>') : array();
-        $exportHeaders = array();
-        $columnNumber = 1;
-
-        // Build headers and column alignment for each item field
-        foreach ($this->itemsData->getItemFields() as $itemField) {
-            $infNameIntern = $itemField->getValue('inf_name_intern');
-            $columnHeader = $this->itemsData->getProperty($infNameIntern, 'inf_name');
-
-            if ($gSettingsManager->GetBool('inventory_items_disable_borrowing') && in_array($infNameIntern, $this->itemsData->borrowFieldNames)) {
-                continue; // skip borrowing fields if borrowing is disabled
-            }
-
-            // For the first column, add item picture column when enabled and in html mode
-            if ($columnNumber === 1 && ($mode === 'html' && $gSettingsManager->GetBool('inventory_item_picture_enabled'))) {
-                    // photo column
-                    $headers[] = '&nbsp;';
-                    $columnAlign[] = 'center';
-            }
-
-            // Decide alignment based on inf_type
-            switch ($this->itemsData->getProperty($infNameIntern, 'inf_type')) {
-                case 'CHECKBOX':
-                case 'RADIO_BUTTON':
-                case 'GENDER':
-                    $columnAlign[] = 'center';
-                    break;
-                case 'NUMBER':
-                case 'DECIMAL':
-                    $columnAlign[] = 'end';
-                    break;
-                default:
-                    $columnAlign[] = 'start';
-                    break;
-            }
-
-            // Add header depending on mode
-            if (in_array($mode, ['csv', 'ods', 'xlsx'])) {
-                $exportHeaders[$columnHeader] = 'string';
-            } else {
-                $headers[] = $columnHeader;
-            }
-
-            $columnNumber++;
-        }
-
-        $preparedData['headers'] = $headers;
-        $preparedData['export_headers'] = $exportHeaders;
-        $preparedData['column_align'] = $columnAlign;
+        $tableDef = $this->prepareTableDefinition($mode);
+        $preparedData['headers'] = $tableDef['headers'];
+        $preparedData['export_headers'] = $tableDef['export_headers'];
+        $preparedData['column_align'] = $tableDef['column_align'];
 
         // Create a user object for later use
         $user = new User($gDb, $gProfileFields);
@@ -889,44 +981,33 @@ class InventoryPresenter extends PagePresenter
                     }
                 }
 
-                // Process KEEPER column
-                if ($infNameIntern === 'KEEPER' && !empty($content)) {
-                    $found = $user->readDataById($content);
-                    if (!$found) {
-                        $orgName = '"' . $gCurrentOrganization->getValue('org_longname') . '"';
-                        $content = $mode === 'html'
-                            ? '<i>' . SecurityUtils::encodeHTML(StringUtils::strStripTags($gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]))) . '</i>'
-                            : '<i>' . $gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]) . '</i>';
+                // Process ITEMNAME column
+                if ($infNameIntern === 'ITEMNAME' && !empty($content)) {
+                    if ($mode === 'html' && (($gCurrentUser->isAdministratorInventory() || $this->isKeeperAuthorizedToEdit((int)$this->itemsData->getValue('KEEPER', 'database'))) && !$this->itemsData->isRetired())) {
+                        $content = '<a href="' . SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'item_edit', 'item_uuid' => $item['ini_uuid'], 'item_retired' => $this->itemsData->isRetired())) . '">' . SecurityUtils::encodeHTML($content) . '</a>';
                     } else {
-                        if ($mode === 'html') {
-                            $content = '<a href="' . SecurityUtils::encodeUrl(
-                                    ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php',
-                                    ['user_uuid' => $user->getValue('usr_uuid')]
-                                ) . '">' . $user->getValue('LAST_NAME') . ', ' . $user->getValue('FIRST_NAME') . '</a>';
-                        } else {
-                            $sql = $this->itemsData->getSqlOrganizationsUsersComplete();
-                            $result = $gDb->queryPrepared($sql);
-                            $content = $user->getValue('LAST_NAME') . ', ' . $user->getValue('FIRST_NAME');
-                            while ($row = $result->fetch()) {
-                                if ($row['usr_id'] == $user->getValue('usr_id')) {
-                                    $content = $row['name'];
-                                    break;
-                                }
-                            }
-                        }
+                        $content = SecurityUtils::encodeHTML($content);
                     }
                 }
 
-                // Process LAST_RECEIVER column
-                if ($infNameIntern === 'LAST_RECEIVER' && !empty($content) && is_numeric($content)) {
+                // Process KEEPER and LAST_RECEIVER column
+                if (($infNameIntern === 'KEEPER' || $infNameIntern === 'LAST_RECEIVER') && $content !== '' && is_numeric($content)) {
                     $found = $user->readDataById($content);
-                    if ($found) {
+                    if (!$found) {
+                        $orgName = '"' . $gCurrentOrganization->getValue('org_longname') . '"';
+                        if ($mode === 'html') {
+                            $content = '<i>' . SecurityUtils::encodeHTML(StringUtils::strStripTags($gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]))) . '</i>';
+                        } else {
+                            $content = '<i>' . $gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]) . '</i>';
+                        }
+                    } else {
                         if ($mode === 'html') {
                             $content = '<a href="' . SecurityUtils::encodeUrl(
                                     ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php',
                                     ['user_uuid' => $user->getValue('usr_uuid')]
                                 ) . '">' . $user->getValue('LAST_NAME') . ', ' . $user->getValue('FIRST_NAME') . '</a>';
                         } else {
+                            // try to get a complete organization-specific name if available
                             $sql = $this->itemsData->getSqlOrganizationsUsersComplete();
                             $result = $gDb->queryPrepared($sql);
                             $content = $user->getValue('LAST_NAME') . ', ' . $user->getValue('FIRST_NAME');
@@ -937,12 +1018,6 @@ class InventoryPresenter extends PagePresenter
                                 }
                             }
                         }
-                    } else {
-                        // user not found, but it is a numeric id -> user was deleted
-                        $orgName = '"' . $gCurrentOrganization->getValue('org_longname') . '"';
-                        $content = $mode === 'html'
-                            ? '<i>' . SecurityUtils::encodeHTML(StringUtils::strStripTags($gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]))) . '</i>'
-                            : '<i>' . $gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]) . '</i>';
                     }
                 }
 
@@ -954,7 +1029,7 @@ class InventoryPresenter extends PagePresenter
                         : $this->itemsData->getHtmlValue($infNameIntern, $content);
                 } elseif (in_array($infType, array('DATE', 'DROPDOWN', 'DROPDOWN_MULTISELECT'))) {
                     $content = $this->itemsData->getHtmlValue($infNameIntern, $content);
-                } elseif ($infType ===  'DROPDOWN_DATE_INTERVAL') {
+                } elseif ($infType === 'DROPDOWN_DATE_INTERVAL') {
                     $content = $this->itemsData->getValue($infNameIntern, 'database');
                     if (isset($content) && is_numeric($content)) {
                         $selectedOption = $content;
@@ -1008,7 +1083,7 @@ class InventoryPresenter extends PagePresenter
                                     $content = $daysRemaining . ' ' . $gL10n->get('SYS_DAY');
                                 } elseif ($daysRemaining === '-0') {
                                     $content = '0 ' . $gL10n->get('SYS_DAYS');
-                                }  else {
+                                } else {
                                     $content = $daysRemaining . ' ' . $gL10n->get('SYS_DAYS');
                                 }
                             } catch (\Exception $e) {
@@ -1090,7 +1165,7 @@ class InventoryPresenter extends PagePresenter
                         $dataMessage = ($this->isKeeperAuthorizedToEdit((int)$this->itemsData->getValue('KEEPER', 'database'))) ? $gL10n->get('SYS_INVENTORY_KEEPER_ITEM_REINSTATE_DESC', array('SYS_INVENTORY_KEEPER_ITEM_DELETE_DESC', 'SYS_INVENTORY_ITEM_REINSTATE_CONFIRM')) : $gL10n->get('SYS_INVENTORY_ITEM_REINSTATE_CONFIRM');
                         // Add reinstate action
                         $rowValues['actions'][] = array(
-                            'dataHref' => 'callUrlHideElement(\'adm_inventory_item_' . $item['ini_uuid'] . '\', \'' . SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'item_reinstate', 'item_uuid' => $item['ini_uuid'], 'item_retired' => $this->itemsData->isRetired())) . '\', \'' . $gCurrentSession->getCsrfToken() . '\''. (($this->getFilterStatus === 0) ? ', \'refreshInventoryTable\'' : '') . ');',
+                            'dataHref' => 'callUrlHideElement(\'adm_inventory_item_' . $item['ini_uuid'] . '\', \'' . SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/inventory.php', array('mode' => 'item_reinstate', 'item_uuid' => $item['ini_uuid'], 'item_retired' => $this->itemsData->isRetired())) . '\', \'' . $gCurrentSession->getCsrfToken() . '\'' . (($this->getFilterStatus === 0) ? ', \'refreshInventoryTable\'' : '') . ');',
                             'dataMessage' => $dataMessage,
                             'icon' => 'bi bi-eye',
                             'tooltip' => $gL10n->get('SYS_INVENTORY_ITEM_REINSTATE')
@@ -1121,7 +1196,7 @@ class InventoryPresenter extends PagePresenter
                     if (!$actionsHeaderAdded) {
                         $actionsHeaderAdded = true;
                         $preparedData['column_align'][] = 'end';
-                        $preparedData['headers'][] = '&nbsp;';
+                        $preparedData['headers'][] = '<span style="display:block; min-width:40px;">&nbsp;</span>';
                     }
                 }
             }
@@ -1282,8 +1357,8 @@ class InventoryPresenter extends PagePresenter
                 $content = $itemsData->getValue($infNameIntern, 'database');
                 $infType = $itemsData->getProperty($infNameIntern, 'inf_type');
 
-                // Process the KEEPER column
-                if ($infNameIntern === 'KEEPER' && !empty($content)) {
+                // Process KEEPER and LAST_RECEIVER column
+                if (($infNameIntern === 'KEEPER' || $infNameIntern === 'LAST_RECEIVER') && $content !== '' && is_numeric($content)) {
                     $found = $user->readDataById($content);
                     if (!$found) {
                         $orgName = '"' . $gCurrentOrganization->getValue('org_longname') . '"';
@@ -1296,28 +1371,13 @@ class InventoryPresenter extends PagePresenter
                     }
                 }
 
-                // Process the LAST_RECEIVER column
-                if ($infNameIntern === 'LAST_RECEIVER' && !empty($content) && is_numeric($content)) {
-                    $found = $user->readDataById($content);
-                    if ($found) {
-                        $content = '<a href="' . SecurityUtils::encodeUrl(
-                                ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php',
-                                ['user_uuid' => $user->getValue('usr_uuid')]
-                            ) . '">' . $user->getValue('LAST_NAME') . ', ' . $user->getValue('FIRST_NAME') . '</a>';
-                    } else {
-                        // user not found, but it is a numeric id -> user was deleted
-                        $orgName = '"' . $gCurrentOrganization->getValue('org_longname') . '"';
-                        $content = '<i>' . SecurityUtils::encodeHTML(StringUtils::strStripTags($gL10n->get('SYS_NOT_MEMBER_OF_ORGANIZATION', [$orgName]))) . '</i>';
-                    }
-                }
-
                 // Format the content based on the field type
                 if ($infType === 'CHECKBOX') {
                     $content = ($content != 1) ? 0 : 1;
                     $content = $itemsData->getHtmlValue($infNameIntern, $content);
                 } elseif (in_array($infType, array('DATE', 'DROPDOWN', 'DROPDOWN_MULTISELECT'))) {
                     $content = $itemsData->getHtmlValue($infNameIntern, $content);
-                } elseif ($infType ===  'DROPDOWN_DATE_INTERVAL') {
+                } elseif ($infType === 'DROPDOWN_DATE_INTERVAL') {
                     if (isset($content) && is_numeric($content)) {
                         try {
                             // Load item data to get connected field value
@@ -1470,7 +1530,7 @@ class InventoryPresenter extends PagePresenter
                 if (!$actionsHeaderAdded) {
                     $actionsHeaderAdded = true;
                     $preparedData['column_align'][] = 'end';
-                    $preparedData['headers'][] = '&nbsp;';
+                    $preparedData['headers'][] = '<span style="display:block; min-width:40px;">&nbsp;</span>';
                 }
             }
 

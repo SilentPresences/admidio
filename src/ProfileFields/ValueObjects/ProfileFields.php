@@ -5,6 +5,7 @@ use Admidio\Infrastructure\Image;
 use Admidio\Infrastructure\Language;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
+use Admidio\Infrastructure\Utils\DateTimeUtils;
 use Admidio\ProfileFields\Entity\ProfileField;
 use Admidio\Infrastructure\Entity\Entity;
 use Admidio\Infrastructure\Database;
@@ -447,7 +448,36 @@ class ProfileFields
             if ($format === 'database') {
                 return $value;
             }
+        }
 
+        return $this->formatValue($fieldNameIntern, $value, $format);
+    }
+
+    /**
+     * Format the raw value of a profile field the way getValue() formats the value of the loaded
+     * user: a date in the date format of the installation, a dropdown, radio button or multiselect
+     * as the text of its options, a country as the name of the country, and the whole thing as HTML
+     * when that format is asked for.
+     *
+     * It is the transformation of getValue(), factored out of it so that a value which does not come
+     * from the loaded user can be shown the same way - a value out of a change set of the hooks, out
+     * of the changelog or out of a query of its own.
+     *
+     * @param string $fieldNameIntern Expects the **usf_name_intern** of the profile field.
+     * @param mixed $value The value as the column **usd_value** holds it.
+     * @param string $format Description of the formatted output. **database** returns the value
+     *                       unchanged, **text**, **html** and an empty format use the settings of
+     *                       the installation, any other value is a date format for a date field.
+     * @return mixed Returns the formatted value.
+     * @throws Exception
+     */
+    public function formatValue(string $fieldNameIntern, mixed $value, string $format = ''): mixed
+    {
+        if ($format === 'database') {
+            return $value;
+        }
+
+        if (array_key_exists($fieldNameIntern, $this->mProfileFields)) {
             if ($fieldNameIntern === 'COUNTRY') {
                 if ($value !== '') {
                     // read the language name of the country
@@ -741,11 +771,10 @@ class ProfileFields
                     }
                     break;
                 case 'DATE':
-                    // Date must be valid and formatted
-                    $date = DateTime::createFromFormat($gSettingsManager->getString('system_date'), $fieldValue);
-                    if ($date === false) {
-                        $date = DateTime::createFromFormat('Y-m-d', $fieldValue);
-                        if ($date === false && !$this->noValueCheck) {
+                    $date = DateTimeUtils::parseDate($fieldValue);
+
+                    if ($date === null) {
+                        if (!$this->noValueCheck) {
                             throw new Exception('SYS_DATE_INVALID', array($this->mProfileFields[$fieldNameIntern]->getValue('usf_name'), $gSettingsManager->getString('system_date')));
                         }
                     } else {

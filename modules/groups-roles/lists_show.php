@@ -25,9 +25,11 @@
 use Admidio\Events\Entity\Event;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
+use Admidio\Infrastructure\Utils\DateTimeUtils;
 use Admidio\Infrastructure\Utils\FileSystemUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
+
 use Admidio\Roles\Entity\ListConfiguration;
 use Admidio\Roles\Entity\Role;
 use Admidio\Roles\Service\RolesService;
@@ -61,8 +63,8 @@ try {
 
     $roleUuidList = explode(',', $getRoleList);
     foreach ($roleUuidList as $key => $roleUuid) {
-        if (!UUID::isValid($roleUuid)) {
-            unset($roleUuidList[$key]);
+        if (!Uuid::isValid($roleUuid)) {
+            throw new Exception('SYS_INVALID_PAGE_VIEW');
         }
     }
     $numberRoles = count($roleUuidList);
@@ -153,12 +155,7 @@ try {
         // if the event is in the past then show all members that were registered for this event
         $eventEnd = $event->getValue('dat_end', 'Y-m-d');
         $eventEnd = DateTime::createFromFormat('Y-m-d', $eventEnd);
-        $dateNow = DateTime::createFromFormat('Y-m-d',DATE_NOW);
-        if ($dateNow === false) {
-            // check if DATE_NOW has system format
-            $dateNow = DateTime::createFromFormat($gSettingsManager->getString('system_date'), DATE_NOW);
-            $dateNow->format('Y-m-d');
-        }
+        $dateNow = new DateTime(DATE_NOW);
 
         $getMembersShowFiler = ($eventEnd < $dateNow) ? 2 : 0;
         $getDateFrom = DATE_NOW;
@@ -166,19 +163,16 @@ try {
     }
 
     // Create date objects and format events in system format
-    $objDateFrom = DateTime::createFromFormat('Y-m-d', $getDateFrom);
-    if ($objDateFrom === false) {
-        // check if date_from  has system format
-        $objDateFrom = DateTime::createFromFormat($gSettingsManager->getString('system_date'), $getDateFrom);
+    $objDateFrom = DateTimeUtils::parseDate($getDateFrom);
+    $objDateTo = DateTimeUtils::parseDate($getDateTo);
+
+    if ($objDateFrom === null || $objDateTo === null) {
+        throw new Exception('SYS_DATE_INVALID');
     }
+
     $dateFrom = $objDateFrom->format($gSettingsManager->getString('system_date'));
     $startDateEnglishFormat = $objDateFrom->format('Y-m-d');
 
-    $objDateTo = DateTime::createFromFormat('Y-m-d', $getDateTo);
-    if ($objDateTo === false) {
-        // check if date_from  has system format
-        $objDateTo = DateTime::createFromFormat($gSettingsManager->getString('system_date'), $getDateTo);
-    }
     $dateTo = $objDateTo->format($gSettingsManager->getString('system_date'));
     $endDateEnglishFormat = $objDateTo->format('Y-m-d');
 
@@ -192,6 +186,11 @@ try {
 
     if ($getRelationTypeList !== '') {
         $relationTypeUuidList = explode(',', $getRelationTypeList);
+        foreach ($relationTypeUuidList as $key => $relationTypeUuid) {
+            if (!Uuid::isValid($relationTypeUuid)) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+        }
     }
 
     if (count($relationTypeUuidList) > 0) {
@@ -378,7 +377,7 @@ try {
     }
 
     // create html page object
-    $page = PagePresenter::withHtmlIDAndHeadline('admidio-lists-show', $headline);
+    $page = PagePresenter::withHtmlIDAndHeadline('adm_groups_roles_lists_show', $headline);
     $page->setContentFullWidth();
     $page->setTitle($title);
     $smarty = $page->createSmartyObject();
@@ -733,7 +732,7 @@ try {
             $dateUuid = $datesStatement->fetchColumn();
             // prepare edit icon
             $columnValues[] = '<a class="admidio-icon-link openPopup" href="javascript:void(0);"
-                                data-href="' . SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/events/events_participation.php', array('dat_uuid' => $dateUuid, 'user_uuid' => $member['usr_uuid'])) . '">
+                                data-href="' . SecurityUtils::encodeUrl(ADMIDIO_URL . FOLDER_MODULES . '/events.php', array('mode' => 'participation_form', 'dat_uuid' => $dateUuid, 'user_uuid' => $member['usr_uuid'])) . '">
                                 <i class="bi bi-pencil-square" data-bs-toggle="tooltip" title="' . $gL10n->get('SYS_EDIT') . '"></i></a>';
         }
 

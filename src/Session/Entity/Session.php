@@ -36,6 +36,12 @@ use Admidio\Infrastructure\Database;
 class Session extends Entity
 {
     /**
+     * Value stored in ses_authentication_methods for a session that was established from
+     * an auto login token instead of an interactive login.
+     */
+    public const AUTHENTICATION_METHOD_AUTO_LOGIN = 'auto';
+
+    /**
      * @var array<string,mixed> Array with all objects of this session object.
      */
     protected array $mObjectArray = array();
@@ -68,8 +74,10 @@ class Session extends Entity
     {
         parent::__construct($database, TBL_SESSIONS, 'ses');
 
-        // disable logging of changes for auto login entries
-        self::$loggingEnabled = false;
+        // NOTE: Changes to the session table must not be logged, but this must NOT be done by
+        // setting Entity::$loggingEnabled, which is a static and would switch off the changelog
+        // for every other entity for the rest of the request. The table 'sessions' is listed in
+        // ChangelogService::$noLogTables, which already prevents any log entry for it.
 
         // determine session id
         if (array_key_exists(COOKIE_PREFIX . '_SESSION_ID', $_COOKIE)) {
@@ -111,6 +119,10 @@ class Session extends Entity
      */
     public function addFormObject(FormPresenter $form): bool
     {
+        // the form that is stored has to be the one that was rendered, so that validate() judges the
+        // POST against the elements the browser was shown
+        $form->finalize();
+
         if (!array_key_exists($form->getCsrfToken(), $this->mFormObjects)) {
             $this->mFormObjects[$form->getCsrfToken()] = $form;
             return true;
@@ -146,6 +158,14 @@ class Session extends Entity
             $gCurrentUser->clear();
         }
         $this->setValue('ses_usr_id', '');
+    }
+
+    /**
+     * Return the opaque session identifier that may be exposed to external SSO clients.
+     */
+    public function getExternalSessionId(): string
+    {
+        return (string) $this->getValue('ses_external_session_id', 'database');
     }
 
     /**
@@ -300,6 +320,31 @@ class Session extends Entity
     }
 
     /**
+     * Record that the user of this session was authenticated by an auto login token.
+     *
+     * Presenting the token is an authentication event, so the session must carry everything
+     * that a login records: without the time the SSO services cannot state when the user
+     * authenticated, and without the external session identifier they cannot address the
+     * session when a client asks for a logout. Values that are already stored are kept, so
+     * that an interactive login is never overwritten and the authentication time does not
+     * creep forward with every request of an auto login session.
+     * @throws Exception
+     */
+    private function markAutoLoginAuthentication()
+    {
+        if ((int)$this->getValue('ses_authentication_time', 'U') > 0) {
+            return;
+        }
+
+        $this->setValue('ses_authentication_time', DATETIME_NOW);
+        $this->setValue('ses_authentication_methods', self::AUTHENTICATION_METHOD_AUTO_LOGIN);
+
+        if ($this->getExternalSessionId() === '') {
+            $this->setValue('ses_external_session_id', bin2hex(random_bytes(32)));
+        }
+    }
+
+    /**
      * Reload auto login data from database table adm_auto_login. if cookie PREFIX_AUTO_LOGIN_ID
      * is set then there could be an auto login the auto login must be done here because after
      * that the corresponding organization must be set.
@@ -319,6 +364,7 @@ class Session extends Entity
                 $this->mAutoLogin->save();
 
                 $this->setValue('ses_usr_id', (int)$this->mAutoLogin->getValue('atl_usr_id'));
+                $this->markAutoLoginAuthentication();
 
                 // save cookie for autologin
                 $currDateTime = new \DateTime();
@@ -387,6 +433,7 @@ class Session extends Entity
         if (isset($this->mAutoLogin)) {
             if ((int)$this->getValue('ses_usr_id') === 0) {
                 $this->setValue('ses_usr_id', (int)$this->mAutoLogin->getValue('atl_usr_id'));
+                $this->markAutoLoginAuthentication();
             }
         } elseif (array_key_exists($this->cookieAutoLoginId, $_COOKIE)) {
             $this->refreshAutoLogin();
@@ -530,20 +577,16 @@ class Session extends Entity
             $secure = HTTPS;
         }
 
-        $gLogger->info('Set Cookie!', array('name' => $name, 'value' => $value, 'expire' => $expire, 'path' => $path, 'domain' => $domain, 'secure' => $secure, 'httpOnly' => $httpOnly, 'sameSite' => 'lax'));
+        $gLogger->info('Set Cookie!', array('name' => $name, 'expire' => $expire, 'path' => $path, 'domain' => $domain, 'secure' => $secure, 'httpOnly' => $httpOnly, 'sameSite' => 'lax'));
 
-        if (PHP_VERSION_ID < 70300) {
-            return setcookie($name, $value, $expire, $path . ';samesite=lax', $domain, $secure, $httpOnly);
-        } else {
-            return setcookie($name, $value, array(
-                'expires' => $expire,
-                'path' => $path,
-                'domain' => $domain,
-                'secure' => $secure,
-                'httponly' => $httpOnly,
-                'samesite' => 'lax'
-            ));
-        }
+        return setcookie($name, $value, array(
+            'expires' => $expire,
+            'path' => $path,
+            'domain' => $domain,
+            'secure' => $secure,
+            'httponly' => $httpOnly,
+            'samesite' => 'lax'
+        ));
     }
 
     /**
@@ -594,27 +637,23 @@ class Session extends Entity
             $secure = HTTPS;
         }
 
-        if (PHP_VERSION_ID < 70300) {
-            session_set_cookie_params($limit, $path . ';samesite=lax', $domain, $secure, $httpOnly);
-        } else {
-            session_set_cookie_params(array(
-                'lifetime' => $limit,
-                'path' => $path,
-                'domain' => $domain,
-                'secure' => $secure,
-                'httponly' => $httpOnly,
-                'samesite' => 'lax'
-            ));
-        }
+        session_set_cookie_params(array(
+            'lifetime' => $limit,
+            'path' => $path,
+            'domain' => $domain,
+            'secure' => $secure,
+            'httponly' => $httpOnly,
+            'samesite' => 'lax'
+        ));
 
         if (session_status() === PHP_SESSION_ACTIVE) {
-            $gLogger->notice('Session is already started!', array('sessionId' => session_id()));
+            $gLogger->notice('Session is already started!');
         }
 
         // Start session
         session_start();
 
-        $gLogger->info('Session Started!', array('name' => $sessionName, 'limit' => $limit, 'path' => $path, 'domain' => $domain, 'secure' => $secure, 'httpOnly' => $httpOnly, 'sameSite' => 'lax', 'sessionId' => session_id()));
+        $gLogger->info('Session Started!', array('name' => $sessionName, 'limit' => $limit, 'path' => $path, 'domain' => $domain, 'secure' => $secure, 'httpOnly' => $httpOnly, 'sameSite' => 'lax'));
     }
 
     /**

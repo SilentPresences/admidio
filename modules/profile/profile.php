@@ -60,7 +60,7 @@ try {
     }
 
     // create html page object
-    $page = PagePresenter::withHtmlIDAndHeadline('admidio-profile', $headline);
+    $page = PagePresenter::withHtmlIDAndHeadline('adm_profile', $headline);
     $page->addTemplateFile('modules/profile.view.tpl');
     $page->addJavascriptFile(ADMIDIO_URL . FOLDER_LIBS . '/zxcvbn/dist/zxcvbn.js');
     $page->addJavascriptFile(ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.js');
@@ -306,6 +306,13 @@ try {
 
     if (count($categoryData) > 0) {
         $profileData[$category] = $categoryData;
+    }
+
+    // if birthday is set than add age to the Smarty params
+    if (isset($masterData['BIRTHDAY'])) {
+        $birthday = new \DateTime($masterData['BIRTHDAY']['value']);
+        $age = $birthday->diff(new \DateTime())->y;
+        $page->assignSmartyVariable('age', $age);
     }
 
     // add missing address fields to masterData so that there is less logic in template necessary

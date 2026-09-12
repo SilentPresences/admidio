@@ -3,6 +3,7 @@
 namespace Admidio\Infrastructure\Plugins;
 
 use Admidio\Preferences\Service\PreferencesService;
+use Admidio\Preferences\Service\PreferenceDefinitions;
 use Admidio\Components\Entity\Component;
 use Admidio\Components\Entity\ComponentUpdate;
 use Admidio\Menu\Entity\MenuEntry;
@@ -216,6 +217,83 @@ abstract class PluginAbstract implements PluginInterface
             self::$dependencies = $configData['dependencies'] ?? array();
             self::$defaultConfig = $configData['defaultConfig'] ?? array();
             self::$metadata = $configData;
+
+            self::registerDefaultConfig();
+        }
+    }
+
+    /**
+     * Add the preferences of the plugin to the canonical preference registry.
+     *
+     * A plugin cannot write its preferences into install/db_scripts/preferences.php, so it
+     * describes them in the defaultConfig of its JSON file and registers them here. From that
+     * point on they are ordinary Admidio preferences: PreferencesService seeds them into every
+     * organization, validates them and removes them again when the plugin is uninstalled.
+     *
+     * @return void
+     * @throws Exception
+     */
+    /**
+     * The preferences this plugin owns, including the companions that hold the keys of an
+     * associative value.
+     *
+     * @return array<int,string>
+     */
+    public static function getPreferenceNames(): array
+    {
+        $names = array();
+
+        foreach (self::$defaultConfig as $key => $configuration) {
+            if (!array_key_exists('value', $configuration)) {
+                continue;
+            }
+            $names[] = $key;
+            $value = $configuration['value'];
+            if (is_array($value) && $value !== array()
+                && array_keys($value) !== range(0, count($value) - 1)) {
+                $names[] = $key . '_keys';
+            }
+        }
+
+        return $names;
+    }
+
+    private static function registerDefaultConfig(): void
+    {
+        $defaults = array();
+
+        foreach (self::$defaultConfig as $key => $configuration) {
+            if (!array_key_exists('value', $configuration)) {
+                continue;
+            }
+
+            $type = match ((string)($configuration['type'] ?? 'string')) {
+                'boolean' => 'bool',
+                'integer' => 'int',
+                default => 'string'
+            };
+            $value = $configuration['value'];
+
+            // Preferences are stored as strings, so the default has to be converted the same way
+            // SettingsManager::set() would store it.
+            if (is_bool($value)) {
+                $value = $value ? '1' : '0';
+            } elseif (is_array($value)) {
+                /*
+                 * An associative value keeps its keys in a preference of its own, because a
+                 * preference stores one string and the order of the keys would be lost otherwise.
+                 */
+                if (array_keys($value) !== range(0, count($value) - 1)) {
+                    $defaults[$key . '_keys'] = array('default' => implode(',', array_keys($value)));
+                }
+                $value = implode(',', $value);
+            }
+
+            $defaults[$key] = array('default' => (string)$value, 'type' => $type);
+        }
+
+        foreach ($defaults as $key => $definition) {
+            PreferenceDefinitions::register($key, $definition);
         }
     }
 
@@ -476,6 +554,30 @@ abstract class PluginAbstract implements PluginInterface
     }
 
     /**
+     * Set the sequence of the plugin in the overview.
+     *
+     * @return bool Returns true if the plugin defines an overview sequence setting.
+     */
+    public static function setPluginSequence(int $sequence): bool
+    {
+        global $gSettingsManager;
+
+        $sequenceSuffix = '_overview_sequence';
+        $sequenceKeys = array_filter(array_keys(self::$defaultConfig), function($key) use ($sequenceSuffix) {
+            return substr($key, -strlen($sequenceSuffix)) === $sequenceSuffix;
+        });
+
+        if (empty($sequenceKeys)) {
+            return false;
+        }
+
+        $sequenceKey = array_values($sequenceKeys)[0];
+        $gSettingsManager->set($sequenceKey, $sequence);
+
+        return true;
+    }
+
+    /**
      * Check if the plugin has all dependencies installed.
      * @return bool Returns true if all dependencies are installed, false otherwise.
      * @throws Exception
@@ -722,30 +824,19 @@ abstract class PluginAbstract implements PluginInterface
      */
     public static function doInstall(bool $addMenuEntry = true): bool
     {
-        global $gDb, $gSettingsManager;
+        global $gDb;
 
         // check if the plugin is already installed
         if (self::isInstalled()) {
             return false;
         }
 
-        // insert default plugin config values into the database
-        $configValues = self::getPluginConfigValues();
-        foreach ($configValues as $key => $value) {
-            if (is_array($value)) {
-                $gSettingsManager->set($key, implode(',', $value));
-                // check if the value contains keys
-                if (array_keys($value) !== range(0, count($value) - 1)) {
-                    // if the value is an associative array, store the keys separately
-                    $gSettingsManager->set($key . '_keys', implode(',', array_keys($value)));
-                }
-            } elseif (is_bool($value)) {
-                // if the value is a boolean, store it as an integer
-                $gSettingsManager->set($key, (int)$value);
-            } else {
-                $gSettingsManager->set($key, $value);
-            }
-        }
+        /*
+         * Give the preferences of the plugin a row in every organization, the way the installer
+         * does it for the core preferences. Without that an organization other than the current
+         * one would have no value at all for them.
+         */
+        PreferencesService::seedDefaults(self::getPreferenceNames());
 
         // check if the db_scripts folder exists
         if (is_dir(self::$pluginPath . DIRECTORY_SEPARATOR . 'db_scripts')) {
@@ -850,7 +941,7 @@ abstract class PluginAbstract implements PluginInterface
             return false;
         }
 
-        global $gDb, $gSettingsManager;
+        global $gDb;
 
         // check if the db_scripts folder exists
         if (is_dir(self::$pluginPath . DIRECTORY_SEPARATOR . 'db_scripts')) {
@@ -890,15 +981,8 @@ abstract class PluginAbstract implements PluginInterface
             }
         }
 
-        // delete the plugin config values from the database
-        foreach (self::getPluginConfigValues() as $key => $value) {
-            if ($gSettingsManager->has($key)) {
-                $gSettingsManager->del($key);
-            }
-        }
-
-        // update $gSettingsManager to remove the plugin config values
-        $gSettingsManager->resetAll();
+        // delete the plugin config values from every organization
+        PreferencesService::removePreferences(self::getPreferenceNames());
 
         // remove the plugin menu entry
         if ($removeMenuEntry) {
@@ -926,24 +1010,15 @@ abstract class PluginAbstract implements PluginInterface
      */
     public static function doUpdate(): bool
     {
-        global $gDb, $gSettingsManager;
+        global $gDb;
 
         // check if the plugin is installed
         if (!self::isInstalled()) {
             return false;
         }
 
-        // add new plugin config values to the database
-        // insert default plugin config values into the database
-        $configValues = self::getPluginConfigValues();
-        foreach ($configValues as $key => $value) {
-            if (is_array($value)) {
-                $gSettingsManager->set($key, implode(',', $value), false);
-                $gSettingsManager->set($key . '_keys', implode(',', array_keys($value)), false);
-            } else {
-                $gSettingsManager->set($key, $value, false);
-            }
-        }
+        // a new version may bring new preferences; the ones an organization already has are kept
+        PreferencesService::seedDefaults(self::getPreferenceNames());
 
         // update the plugin
         $componentUpdateHandle = new ComponentUpdate($gDb);

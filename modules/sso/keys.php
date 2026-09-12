@@ -11,12 +11,11 @@
  */
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\SecurityUtils;
-use Admidio\SSO\Entity\Key;
 use Admidio\SSO\Service\KeyService;
 use Admidio\UI\Presenter\SSOKeyPresenter;
 
 require_once(__DIR__ . '/../../system/common.php');
-$validModes = array('list', 'edit', 'save', 'delete', 'import', 'export', 'export_password', 'certificate', 'regenerate');
+$validModes = array('list', 'edit', 'save', 'delete', 'export', 'export_password', 'certificate', 'regenerate');
 $getMode = admFuncVariableIsValid($_GET, 'mode', 'string', array('defaultValue' => 'list', 'validValues' => $validModes));
 
 try {
@@ -61,23 +60,20 @@ try {
             // check the CSRF token of the form against the session token
             SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
 
-            $key = new Key($gDb);
-            $key->readDataByUuid($getKeyUUID);
-            $keyId = $key->getValue('key_id');
+            // only keys of the current organization may be deleted
+            $keyService = new KeyService($gDb);
+            $key = $keyService->getKeyFromUUID($getKeyUUID);
+            $keyId = (int) $key->getValue('key_id');
             // Check if key is set as this IdP's signing or encryption key
             if ($gSettingsManager->get('sso_saml_signing_key') == $keyId ||
-                $gSettingsManager->get('sso_saml_encryption_key') == $keyId) {
+                $gSettingsManager->get('sso_saml_encryption_key') == $keyId ||
+                $gSettingsManager->get('sso_oidc_signing_key') == $keyId ) {
                     echo json_encode(array('status' => 'error',
                             'message' => $gL10n->get('SYS_SSO_KEY_IN_USE')));
             } else {
                 $key->delete();
                 echo json_encode(array('status' => 'success'));
             }
-            break;
-
-        case 'import':
-            // TODO_RK
-
             break;
 
         case 'export_password':
@@ -87,7 +83,10 @@ try {
             break;
 
         case 'export':
-            // SecurityUtils::validateCsrfToken($_POST['adm_csrf_token']);
+            // check form field input and sanitized it from malicious content
+            $passwordForm = $gCurrentSession->getFormObject($_POST['adm_csrf_token']);
+            $passwordForm->validate($_POST);
+
             $keyService = new KeyService($gDb);
             $password = admFuncVariableIsValid($_POST, 'key_password', 'string');
             $keyService->exportToPkcs12($getKeyUUID, $password);

@@ -39,6 +39,15 @@ class SelectOptions extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'profile_field_select_option';
+    }
+
+    /**
      * Read all options of the select field with the id $usfId from the database and store them in the internal array $optionValues.
      * The values are stored in the array with their ID as key.
      * If no id is set than no data will be read.
@@ -147,11 +156,12 @@ class SelectOptions extends Entity
     public function deleteOption(int $ufoId): bool
     {
         if ($this->usfId > 0) {
-            // delete the option from the database
-            $sql = 'DELETE FROM ' . TBL_USER_FIELD_OPTIONS . '
-                    WHERE ufo_id = ? -- option ID
-                    AND ufo_usf_id = ? -- $usfId';
-            $this->db->queryPrepared($sql, array($ufoId, $this->usfId));
+            // read the option before it is deleted, so that the deletion is written to the
+            // changelog. readDataById() only accepts options of this field, which is the same
+            // restriction the delete statement applied before.
+            if ($this->readDataById($ufoId)) {
+                $this->delete();
+            }
 
             // remove the option from the internal array
             unset($this->optionValues[$ufoId]);

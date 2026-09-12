@@ -35,7 +35,9 @@ try {
     $getCopy = admFuncVariableIsValid($_GET, 'copy', 'bool');
     $getAcceptRegistration = admFuncVariableIsValid($_GET, 'accept_registration', 'bool');
     $getUserUuids = admFuncVariableIsValid($_GET, 'user_uuids', 'array', array('defaultValue' => array()));
+    $editSelection = true;
     if (empty($getUserUuids)) {
+        $editSelection = false;
         $getUserUuids = admFuncVariableIsValid($_POST, 'uuids', 'array', array('defaultValue' => array()));
         $getUserUuids = array_map(function($uuid) {
             return preg_replace('/row_members_/', '', $uuid);
@@ -44,6 +46,10 @@ try {
         if (empty($getUserUuids)) {
             $getUserUuids = array(admFuncVariableIsValid($_GET, 'user_uuid', 'uuid'));
         }
+    }
+
+    if (!$gValidLogin && $getUserUuids[0] !== '') {
+        throw new Exception('SYS_INVALID_PAGE_VIEW');
     }
 
     $registrationOrgId = $gCurrentOrgId;
@@ -59,7 +65,9 @@ try {
 
             // create a user registration object and set requested organization
             $user = new UserRegistration($gDb, $gProfileFields);
-            $user->readDataByUuid($userUuid);
+            if ($gValidLogin) {
+                $user->readDataByUuid($userUuid);
+            }
             if (isset($_POST['adm_org_id'])) {
                 $user->setOrganization((int)$_POST['adm_org_id']);
             }
@@ -122,7 +130,7 @@ try {
             $gNavigation->addUrl(CURRENT_URL, $headline);
 
             // create an HTML page object
-            $page = PagePresenter::withHtmlIDAndHeadline('admidio-profile-edit', $headline);
+            $page = PagePresenter::withHtmlIDAndHeadline('adm_profile_edit', $headline);
 
             // show a link to view profile field change history
             ChangelogService::displayHistoryButton($page, 'profile', 'users,user_data,user_relations,members', !empty($users[0]['uuid']) && $gCurrentUser->hasRightEditProfile($users[0]['user']), array('uuid' => $users[0]['uuid']));
@@ -374,7 +382,7 @@ try {
             }
 
             // if captchas are enabled, then visitors of the website must resolve this
-            if (!$gValidLogin && $gSettingsManager->getBool('registration_enable_captcha')) {
+            if (!$gValidLogin && $gSettingsManager->getBool('captcha_enabled')) {
                 $form->addCaptcha('adm_captcha_code');
             }
 
@@ -405,7 +413,7 @@ try {
             $gNavigation->addUrl(CURRENT_URL, $headline);
 
             // create an HTML page object
-            $page = PagePresenter::withHtmlIDAndHeadline('admidio-profile-edit-selection', $headline);
+            $page = PagePresenter::withHtmlIDAndHeadline('adm_profile_edit_selection', $headline);
 
             // create an HTML form
             $form = new FormPresenter(
@@ -638,7 +646,7 @@ try {
 
             // check form field input and sanitized it from malicious content
             $profileEditForm = $gCurrentSession->getFormObject($_POST['adm_csrf_token']);
-            $formValues = $profileEditForm->validate($_POST, (count($users) > 1));
+            $formValues = $profileEditForm->validate($_POST, $editSelection);
 
             // loop over all users and save the data
             foreach ($users as $user) {
@@ -671,9 +679,11 @@ try {
                     if ($_POST['usr_login_name'] !== $user['user']->getValue('usr_login_name')) {
                         if (strlen($_POST['usr_login_name']) > 0) {
                             // check if the username is already assigned
+                            // the login folds the case, so this check has to do the same or a second
+                            // account that differs only in case slips through on PostgreSQL
                             $sql = 'SELECT usr_uuid
                             FROM ' . TBL_USERS . '
-                            WHERE usr_login_name = ?';
+                            WHERE UPPER(usr_login_name) = UPPER(?)';
                             $pdoStatement = $gDb->queryPrepared($sql, array($_POST['usr_login_name']));
 
                             if ($pdoStatement->rowCount() > 0 && $pdoStatement->fetchColumn() !== $user['uuid']) {

@@ -84,10 +84,11 @@ class SettingsManager
      */
     private function delete(string $name)
     {
-        $sql = 'DELETE FROM ' . TBL_PREFERENCES . '
-                 WHERE prf_org_id = ? -- $orgId
-                   AND prf_name   = ? -- $name';
-        $this->db->queryPrepared($sql, array($this->orgId, $name));
+        // The setting is removed through its own entity, so the deletion reaches the change history.
+        // A plain DELETE would take it out of the audit trail without a trace.
+        $preference = new Preferences($this->db);
+        $preference->readDataByColumns(array('prf_org_id' => $this->orgId, 'prf_name' => $name));
+        $preference->delete();
     }
 
     /**
@@ -239,6 +240,7 @@ class SettingsManager
 
                 return true;
             } catch (\UnexpectedValueException $e) {
+                unset($this->settings[$name]);
                 return false;
             }
         }
@@ -336,6 +338,11 @@ class SettingsManager
     /**
      * Expects an array with setting name and value and will then add all the settings of the array to
      * the database. Checks the existence of each setting and perform an insert or update.
+     *
+     * The settings that are already stored are read once for the whole array. Asking the database for
+     * every single name instead doubles the number of statements, and this method is called with the
+     * roughly 200 default preferences whenever an organization is created or updated.
+     *
      * @param array<string,mixed> $settings Array with all setting names and values to set
      * @param bool $update Set true to make a force reload of this setting from the database
      * @throws Exception
@@ -360,8 +367,16 @@ class SettingsManager
 
         $this->db->startTransaction();
 
+        $storedSettings = $this->loadAll();
+
         foreach ($settings as $name => $value) {
-            $this->updateOrInsertSetting($name, (string)$value, $update);
+            $value = (string)$value;
+
+            if (!array_key_exists($name, $storedSettings)) {
+                $this->insert($name, $value);
+            } elseif ($update && $storedSettings[$name] !== $value) {
+                $this->update($name, $value);
+            }
         }
 
         $this->db->endTransaction();
@@ -428,7 +443,11 @@ class SettingsManager
      */
     private function updateOrInsertSetting(string $name, string $value, bool $update = true)
     {
-        if ($this->has($name, true)) {
+        // Calling has() forces loading the current value from the database -- if it exists
+        $this->has($name, true);
+
+        // If a value was loaded from the database, change it, otherwise insert
+        if (array_key_exists($name, $this->settings)) {
             if ($update && $this->settings[$name] !== $value) {
                 $this->update($name, $value);
             }

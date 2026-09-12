@@ -127,6 +127,14 @@ class Database
      */
     protected int $transactions = 0;
     /**
+     * @var array<int,callable> Work that may only run once the outermost transaction has committed.
+     */
+    protected array $afterCommitCallbacks = array();
+    /**
+     * @var array<int,callable> Work that has to run when the transaction did not commit.
+     */
+    protected array $afterRollbackCallbacks = array();
+    /**
      * @var array<string,array<string,array<string,mixed>>> Array with arrays of every table with their structure
      */
     protected array $dbStructure = array();
@@ -314,15 +322,119 @@ class Database
         $result = $this->pdo->commit();
 
         if (!$result) {
+            // showError() rolls back and runs the after-rollback callbacks
             $this->showError();
             // => EXIT
         }
 
         $this->transactions = 0;
 
+        // The change is in the database now, so the work that was waiting for it may run. It runs
+        // outside the transaction on purpose: it is allowed to fail without taking the change with
+        // it, and it may open a transaction of its own.
+        $this->runAfterCommitCallbacks();
+
         return $result;
     }
 
+
+    /**
+     * Register work that may only be done once the change is really in the database. If no
+     * transaction is open, the statement itself was the commit and the callback runs immediately;
+     * otherwise it runs when the outermost transaction is committed and never at all if that
+     * transaction is rolled back or abandoned.
+     *
+     * This is infrastructure for the persistence hooks and not an extension point of its own. A
+     * plugin does not register here, it listens to entity_created and its relatives, which use it.
+     *
+     * @param callable $callback The work that has to wait for the commit.
+     * @return void
+     * @see Database#registerAfterRollback
+     */
+    public function registerAfterCommit(callable $callback): void
+    {
+        if ($this->transactions === 0) {
+            $callback();
+            return;
+        }
+
+        $this->afterCommitCallbacks[] = $callback;
+    }
+
+    /**
+     * Register work that has to be done when the transaction does not reach the database: a
+     * rollback, a failed commit, or a request that ends while a transaction is still open. It is
+     * how the failure hooks get their chance to release what a pre-action reserved.
+     *
+     * @param callable $callback The work that has to run when the change is lost.
+     * @return void
+     * @see Database#registerAfterCommit
+     */
+    public function registerAfterRollback(callable $callback): void
+    {
+        $this->afterRollbackCallbacks[] = $callback;
+    }
+
+    /**
+     * Whether a transaction is currently open. A caller that has to know whether its change is
+     * already final asks this instead of counting its own start and end calls.
+     * @return bool Returns **true** while a transaction is open.
+     */
+    public function isInTransaction(): bool
+    {
+        return $this->transactions > 0;
+    }
+
+    /**
+     * Run and drop the callbacks that were waiting for the commit. A failing callback is logged and
+     * does not keep the remaining ones from running: the change is written, and the work that
+     * follows it has to be attempted as far as it can be.
+     * @return void
+     */
+    protected function runAfterCommitCallbacks(): void
+    {
+        global $gLogger;
+
+        $callbacks = $this->afterCommitCallbacks;
+        $this->afterCommitCallbacks = array();
+        $this->afterRollbackCallbacks = array();
+
+        foreach ($callbacks as $callback) {
+            try {
+                $callback();
+            } catch (\Throwable $exception) {
+                if ($gLogger instanceof \Psr\Log\LoggerInterface) {
+                    $gLogger->error('DATABASE: after-commit callback failed', array('exception' => $exception));
+                }
+                throw $exception;
+            }
+        }
+    }
+
+    /**
+     * Run and drop the callbacks of a transaction that did not reach the database. Their failure is
+     * logged and swallowed: they are cleanup, and the reason the transaction was lost has to stay
+     * the failure that Admidio reports.
+     * @return void
+     */
+    public function runAfterRollbackCallbacks(): void
+    {
+        global $gLogger;
+
+        $callbacks = $this->afterRollbackCallbacks;
+        $this->afterCommitCallbacks = array();
+        $this->afterRollbackCallbacks = array();
+
+        foreach ($callbacks as $callback) {
+            try {
+                $callback();
+            } catch (\Throwable $exception) {
+                if ($gLogger instanceof \Psr\Log\LoggerInterface) {
+                    $gLogger->error('DATABASE: after-rollback callback failed', array('exception' => $exception));
+                }
+            }
+        }
+    }
     /**
      * Escapes special characters within the input string.
      * Note: This method will add a high comma at the beginning and the end of the $string.
@@ -574,8 +686,13 @@ class Database
     {
         $tableExists = false;
 
-        $sql = 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?';
-        $statement = $this->queryPrepared($sql, array(DB_NAME, $tableName));
+        if ($this->engine === self::PDO_ENGINE_PGSQL) {
+            $sql = 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?';
+            $statement = $this->queryPrepared($sql, array($tableName));
+        } else {
+            $sql = 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?';
+            $statement = $this->queryPrepared($sql, array(DB_NAME, $tableName));
+        }
         if ($statement->fetchColumn() > 0) {
             $tableExists = true;
         }
@@ -643,7 +760,7 @@ class Database
             }
         } elseif ($this->engine === self::PDO_ENGINE_PGSQL) {
             $sql = 'SELECT column_name, column_default, is_nullable, data_type,
-                           (SELECT \'YES\' from information_schema.key_column_usage kcu
+                           (SELECT DISTINCT \'YES\' from information_schema.key_column_usage kcu
                              WHERE kcu.table_name  = c.table_name
                                and kcu.column_name = c.column_name ) as key
                       FROM information_schema.columns c
@@ -748,6 +865,10 @@ class Database
             $replaces = array(
                 // Postgres doesn't know unsigned
                 'unsigned' => '',
+                // Postgres only supports text as a generic text with large limit
+                'tinytext' => 'text',
+                'mediumtext' => 'text',
+                'longtext' => 'text',
                 // since version 4.1 we don't replace boolean with smallint
                 //'boolean'  => 'smallint',
                 // A blob is in Postgres a bytea datatype
@@ -888,8 +1009,22 @@ class Database
             if ($this->pdoStatement !== false) {
                 $success = $this->pdoStatement->execute($params);
 
-                // When executing PostgreSQL statements, at least if there is a table missing, no exception is thrown. But the PDOStatement.execute() returns false.
+                // With PDO::ERRMODE_SILENT a failed execute() returns false instead of throwing.
+                // Report that error through the same application path as a PDOException.
                 if (!$success) {
+                    $gLogger->debug('SQL: Execution time ' . getExecutionTime($startTime));
+
+                    $errorInfo = $this->pdoStatement->errorInfo();
+                    $errorCode = (string) ($errorInfo[0] ?? '');
+                    $errorMessage = (string) ($errorInfo[2] ?? 'Unknown database error');
+
+                    if ($showError) {
+                        $gLogger->critical('PDO error: ' . $errorMessage);
+                        $this->showError($errorMessage, $errorCode);
+                        // => EXIT
+                    }
+
+                    $gLogger->warning('PDO error: ' . $errorMessage);
                     return false;
                 }
 
@@ -959,6 +1094,8 @@ class Database
         }
 
         $this->transactions = 0;
+
+        $this->runAfterRollbackCallbacks();
 
         return true;
     }
@@ -1064,6 +1201,9 @@ class Database
             $this->pdo->rollBack();
             $this->transactions = 0;
         }
+
+        // Whether a transaction was open or not, nothing that was waiting for a commit may run now.
+        $this->runAfterRollbackCallbacks();
 
         $gLogger->critical($code . ': ' . $errorMessage);
 

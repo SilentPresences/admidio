@@ -11,6 +11,7 @@ use DateTime;
 use ModuleEvents;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
+use Ramsey\Uuid\Uuid;
 
 /**
  * @brief Class manages the list configuration
@@ -81,8 +82,22 @@ class ListConfiguration extends Entity
         parent::__construct($database, TBL_LISTS, 'lst', $listID);
 
         if ($listID > 0) {
+            // a list that has no row of its own does not exist, a list without columns is valid
+            if ($this->isNewRecord()) {
+                throw new Exception('List-Configuration was not found.');
+            }
+
             $this->readColumns();
         }
+    }
+
+    /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'list_configuration';
     }
 
     /**
@@ -727,6 +742,17 @@ class ListConfiguration extends Entity
         );
         $optionsAll = array_replace($optionsDefault, $options);
 
+        foreach ($optionsAll['showRolesMembers'] as $roleUUID) {
+            if (!is_string($roleUUID) || !Uuid::isValid($roleUUID)) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+        }
+        foreach ($optionsAll['showRelationTypes'] as $relationTypeUUID) {
+            if (!is_string($relationTypeUUID) || !Uuid::isValid($relationTypeUUID)) {
+                throw new Exception('SYS_INVALID_PAGE_VIEW');
+            }
+        }
+
         $this->showLeaders = $optionsAll['showLeaderFlag'];
         // if there is more than 1 role, don't show the leaders
         if (count($optionsAll['showRolesMembers']) > 1) {
@@ -1062,7 +1088,9 @@ class ListConfiguration extends Entity
     /**
      * Read data of responsible columns and store in an object. Only columns of profile fields which the current
      * user is allowed to view will be stored in the object. If only the role membership should be shown, then
-     * remove all columns except first name, last name and assignment timestamps.
+     * remove all columns except first name, last name and assignment timestamps. A configuration without any
+     * column is valid: removing every column and starting again is an ordinary way to edit a list, so the
+     * object is then read with an empty column list.
      * @throws Exception
      */
     public function readColumns(): void
@@ -1076,10 +1104,6 @@ class ListConfiguration extends Entity
                  WHERE lsc_lst_id = ? -- $this->getValue(\'lst_id\')
               ORDER BY lsc_number';
         $lscStatement = $this->db->queryPrepared($sql, array((int)$this->getValue('lst_id')));
-
-        if ($lscStatement->rowCount() === 0) {
-            throw new Exception('List-Configuration was not found.');
-        }
 
         while ($lscRow = $lscStatement->fetch()) {
             $usfId = (int)$lscRow['lsc_usf_id'];
@@ -1101,6 +1125,32 @@ class ListConfiguration extends Entity
                 }
             }
         }
+    }
+
+    /**
+     * Reads a record out of the table in database selected by the conditions of the param **$sqlWhereCondition** out
+     * of the table. If the SQL find more than one record the method returns **false**. Per default all columns of the
+     * default table will be read and stored in the object. Only lists of the current organization will be read.
+     * If the list belongs to another organization than an exception will be thrown.
+     * @param string $sqlWhereCondition Conditions for the table to select one record
+     * @param array<int,mixed> $queryParams The query params for the prepared statement
+     * @return bool Returns **true** if one record is found
+     * @throws Exception
+     * @see Entity#readDataByUuid
+     * @see Entity#readDataByColumns
+     * @see Entity#readDataById
+     */
+    protected function readData(string $sqlWhereCondition, array $queryParams = array()): bool
+    {
+        if (parent::readData($sqlWhereCondition, $queryParams)) {
+            // check if list belongs to this organization
+            if ($this->getValue('lst_org_id') > 0 && $this->getValue('lst_org_id') !== $GLOBALS['gCurrentOrgId']) {
+                throw new Exception('List ' . $this->getValue('lst_uuid') . ' belongs to another organization.');
+            }
+            return true;
+        }
+
+        return false;
     }
 
     /**

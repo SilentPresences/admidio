@@ -2,12 +2,14 @@
 namespace Admidio\Roles\Entity;
 
 use Admidio\Categories\Entity\Category;
+use Admidio\Changelog\Entity\LogChanges;
 use Admidio\Events\ValueObject\Participants;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Language;
 use Admidio\Infrastructure\Entity\Entity;
 use Admidio\Roles\ValueObject\RoleDependency;
+use Admidio\SSO\Service\SSOAccessRevocationService;
 use Admidio\Users\Entity\User;
 use DateInterval;
 use DateTime;
@@ -74,6 +76,15 @@ class Role extends Entity
             $this->setValue('rol_view_members_profiles', Role::VIEW_NOBODY);
             $this->setValue('rol_mail_this_role', Role::VIEW_LOGIN_USERS);
         }
+    }
+
+    /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'role';
     }
 
     /**
@@ -263,29 +274,60 @@ class Role extends Entity
 
         $this->db->startTransaction();
 
-        $sql = 'DELETE FROM ' . TBL_ROLE_DEPENDENCIES . '
-                 WHERE rld_rol_id_parent = ? -- $rolId
-                    OR rld_rol_id_child  = ? -- $rolId';
-        $this->db->queryPrepared($sql, array($rolId, $rolId));
+        /*
+         * The members are collected before the memberships are deleted, because they go in one
+         * bulk statement that never reaches Membership::delete(). The list is empty unless a
+         * single sign-on client restricts its access to this role.
+         */
+        $revocationService = new SSOAccessRevocationService($this->db);
+        $usersToRecheck = $revocationService->getUsersToRecheckForRole($rolId);
 
-        $sql = 'DELETE FROM ' . TBL_MEMBERS . '
-                 WHERE mem_rol_id = ? -- $rolId';
-        $this->db->queryPrepared($sql, array($rolId));
+        // Deleting a role is one action of the user, so the role and everything that is removed
+        // together with it belong into one change set of the changelog.
+        $previousChangeSet = LogChanges::startChangeSet();
+
+        $this->deleteDependentRecords(
+            new RolesDependencies($this->db),
+            array('rld_rol_id_parent', 'rld_rol_id_child'),
+            'rld_rol_id_parent = ? OR rld_rol_id_child = ?',
+            array($rolId, $rolId)
+        );
+
+        $this->deleteDependentRecords(
+            new Membership($this->db),
+            array('mem_id'),
+            'mem_rol_id = ?',
+            array($rolId)
+        );
 
         $sql = 'UPDATE ' . TBL_EVENTS . '
                    SET dat_rol_id = NULL
                  WHERE dat_rol_id = ? -- $rolId';
         $this->db->queryPrepared($sql, array($rolId));
 
-        $sql = 'DELETE FROM ' . TBL_ROLES_RIGHTS_DATA . '
-                 WHERE rrd_rol_id = ? -- $rolId';
-        $this->db->queryPrepared($sql, array($rolId));
+        $this->deleteDependentRecords(
+            new RolesRightsData($this->db),
+            array('rrd_id'),
+            'rrd_rol_id = ?',
+            array($rolId)
+        );
 
         $sql = 'DELETE FROM ' . TBL_MESSAGES_RECIPIENTS . '
                  WHERE msr_rol_id = ? -- $rolId';
         $this->db->queryPrepared($sql, array($rolId));
 
         $return = parent::delete();
+
+        LogChanges::endChangeSet($previousChangeSet);
+
+        /*
+         * Judged against the state the deletion leaves behind: a client that is now restricted to
+         * roles the user is not in loses its tokens, a client whose last access role this was is
+         * open to everybody and keeps them.
+         */
+        foreach ($usersToRecheck as $userId) {
+            $revocationService->revokeLostClientAccess($userId);
+        }
 
         if (isset($gCurrentSession)) {
             // all active users must renew their user data because maybe their
@@ -415,18 +457,24 @@ class Role extends Entity
      * This method checks if the current user is allowed to view this role. Therefore,
      * the view properties of the role will be checked. If it's an event role than
      * we also check if the user is a member of the roles that could participate at the event.
+     * Roles of other organizations are not visible if the category is organization dependent.
      * @return bool Return true if the current user is allowed to view this role
      * @throws Exception
      */
     public function isVisible(): bool
     {
-        global $gCurrentUser, $gValidLogin;
+        global $gCurrentUser, $gValidLogin, $gCurrentOrgId;
 
         if (!$gValidLogin) {
             return false;
         }
 
         $rolId = (int)$this->getValue('rol_id');
+
+        // check if the role belongs to the current organization
+        if ((int)$this->getValue('cat_org_id') !== $gCurrentOrgId && $this->getValue('cat_org_id') > 0) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
 
         if ($this->type !== Role::ROLE_EVENT) {
             return $gCurrentUser->hasRightViewRole($rolId);
@@ -447,10 +495,11 @@ class Role extends Entity
     }
 
     /**
-     * Reads a record out of the table in database selected by the conditions of the param **$sqlWhereCondition** out of the table.
-     * If the SQL find more than one record the method returns **false**.
-     * Per default all columns of the default table will be read and stored in the object.
-     * If one record is found than the type of the role (ROLE_GROUP or ROLE_EVENT) is set.
+     * Reads a record out of the table in database selected by the conditions of the param **$sqlWhereCondition** out
+     * of the table. If the SQL find more than one record the method returns **false**. Per default all columns of the
+     * default table will be read and stored in the object. Only roles of the current organization will be read.
+     * If the role belongs to another organization than an exception will be thrown. If one record is found than the
+     * type of the role (ROLE_GROUP or ROLE_EVENT) is set.
      * @param string $sqlWhereCondition Conditions for the table to select one record
      * @param array<int,mixed> $queryParams The query params for the prepared statement
      * @return bool Returns **true** if one record is found
@@ -462,6 +511,11 @@ class Role extends Entity
     protected function readData(string $sqlWhereCondition, array $queryParams = array()): bool
     {
         if (parent::readData($sqlWhereCondition, $queryParams)) {
+            // check if role belongs to this organization
+            if ($this->getValue('cat_org_id') > 0 && $this->getValue('cat_org_id') !== $GLOBALS['gCurrentOrgId']) {
+                throw new Exception('Role ' . $this->getValue('rol_uuid') . ' belongs to another organization.');
+            }
+
             if ($this->getValue('cat_name_intern') === 'EVENTS') {
                 $this->setType(Role::ROLE_EVENT);
             } else {
@@ -505,6 +559,18 @@ class Role extends Entity
         }
 
         return $returnValue;
+    }
+
+    /**
+     * Synchronize the maximum number of members of an event participation role with its event.
+     *
+     * @param int $maxMembers Maximum number of participants; 0 means unlimited.
+     * @return bool Returns true if the value was changed.
+     * @throws Exception
+     */
+    public function setMaxMembersFromEvent(int $maxMembers): bool
+    {
+        return parent::setValue('rol_max_members', max(0, $maxMembers));
     }
 
     /**
@@ -691,7 +757,9 @@ class Role extends Entity
         }
 
         // reload session of that user because of changes to the assigned roles and rights
-        $gCurrentSession->reload($userId);
+        if (isset($gCurrentSession)) {
+            $gCurrentSession->reload($userId);
+        }
 
         $this->db->endTransaction();
     }
@@ -855,7 +923,9 @@ class Role extends Entity
 
             // all active users must renew their user data because maybe their
             // rights have been changed if they were members of this role
-            $gCurrentSession->reloadAllSessions();
+            if (isset($gCurrentSession)) {
+                $gCurrentSession->reloadAllSessions();
+            }
         } else {
             throw new Exception('Role ' . $this->getValue('rol_name') . ' is a system role and could not be set inactive!');
         }

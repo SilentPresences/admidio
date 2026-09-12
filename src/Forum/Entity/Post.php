@@ -9,6 +9,7 @@ use Admidio\Infrastructure\Email;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
 use Admidio\Changelog\Entity\LogChanges;
+use Admidio\Changelog\Service\ChangelogService;
 
 /**
  * @brief Class manages access to database table adm_guestbook_comments
@@ -37,6 +38,15 @@ class Post extends Entity
         $this->connectAdditionalTable(TBL_FORUM_TOPICS, 'fot_id', 'fop_fot_id');
 
         parent::__construct($database, TBL_FORUM_POSTS, 'fop', $fopID);
+    }
+
+    /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'forum_post';
     }
 
     /**
@@ -79,11 +89,12 @@ class Post extends Entity
     public function save(bool $updateFingerPrint = true): bool
     {
         $returnCode = parent::save($updateFingerPrint);
+        $inserted = $this->wasInserted();
 
         // read data to fill folder information to the object
-        if ($this->newRecord) {
+        if ($inserted) {
             $this->readDataById($this->getValue('fop_id'));
-            $this->newRecord = true;
+            $this->insertedRecord = true;
         }
 
         return $returnCode;
@@ -105,7 +116,7 @@ class Post extends Entity
         if ($gSettingsManager->getBool('system_notifications_new_entries')) {
             $notification = new Email();
 
-            if ($this->isNewRecord()) {
+            if ($this->wasInserted()) {
                 $messageTitleText = 'SYS_FORUM_POST_CREATED_TITLE';
                 $messageUserText = 'SYS_CREATED_BY';
                 $messageDateText = 'SYS_CREATED_AT';
@@ -177,5 +188,41 @@ class Post extends Entity
     {
         $fotEntry = new Topic($this->db, $this->getValue('fop_fot_id'));
         $logEntry->setLogRelated($fotEntry->getValue('fot_uuid'), $fotEntry->getValue('fot_title'));
+    }
+
+    /**
+     * Write one changelog entry for every post that the given condition selects. A post is logged
+     * with the topic it belongs to, so adjustLogEntry() reads a Topic object. Deleting a topic
+     * would read it once per post, therefore the topic is read together with the posts here.
+     *
+     * @param array $identifyingColumns The columns that identify a single post. They are not needed
+     *                                  here, the whole record is read in one query anyway.
+     * @param string $sqlWhereCondition Condition that selects the posts, without the leading
+     *                                  keyword WHERE and only with columns of adm_forum_posts.
+     * @param array $queryParams Values of the prepared parameters of the condition.
+     * @return int Returns the number of written log entries.
+     * @throws Exception
+     */
+    public function logBulkDeletion(array $identifyingColumns, string $sqlWhereCondition, array $queryParams = array()): int
+    {
+        if (!self::$loggingEnabled) return 0;
+        $table = str_replace(TABLE_PREFIX . '_', '', $this->tableName);
+        if (!ChangelogService::isTableLogged($table)) return 0;
+
+        $sql = 'SELECT fop_id, fop_uuid, fop_text, fot_uuid, fot_title
+                  FROM ' . TBL_FORUM_POSTS . '
+            INNER JOIN ' . TBL_FORUM_TOPICS . '
+                    ON fot_id = fop_fot_id
+                 WHERE ' . $sqlWhereCondition;
+        $records = $this->db->queryPrepared($sql, $queryParams)->fetchAll(\PDO::FETCH_ASSOC);
+
+        foreach ($records as $record) {
+            $logEntry = new LogChanges($this->db);
+            $logEntry->setLogDeletion($table, (int)$record['fop_id'], $record['fop_uuid'], $record['fop_text']);
+            $logEntry->setLogRelated($record['fot_uuid'], $record['fot_title']);
+            $logEntry->save();
+        }
+
+        return count($records);
     }
 }

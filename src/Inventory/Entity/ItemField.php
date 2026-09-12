@@ -46,6 +46,15 @@ class ItemField extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'inventory_field';
+    }
+
+    /**
      * Deletes the selected field and all references in other tables.
      * Also, the gap in sequence will be closed. After that the class will be initialized.
      * @return true true if no error occurred
@@ -53,7 +62,12 @@ class ItemField extends Entity
      */
     public function delete(): bool
     {
-        global $gCurrentOrgId;
+        global $gCurrentOrgId, $gCurrentUser;
+
+        // only administrators can edit item fields
+        if (!$gCurrentUser->isAdministratorInventory()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
 
         if ($this->getValue('inf_system') == 1) {
             // System fields could not be deleted
@@ -69,18 +83,30 @@ class ItemField extends Entity
                    AND inf_sequence > ? -- $this->getValue(\'inf_sequence\')';
         $this->db->queryPrepared($sql, array($gCurrentOrgId, (int)$this->getValue('inf_sequence')));
 
+        // Deleting an item field is one action of the user, so the field and every value that is
+        // removed with it belong into one change set of the changelog.
+        $previousChangeSet = LogChanges::startChangeSet();
+
         // delete all data of this field in the item data table
         $infId = (int)$this->getValue('inf_id');
-        $sql = 'DELETE FROM ' . TBL_INVENTORY_ITEM_DATA . '
-                 WHERE ind_inf_id = ? -- $infId';
-        $this->db->queryPrepared($sql, array($infId));
+        $this->deleteDependentRecords(
+            new ItemData($this->db),
+            array('ind_id'),
+            'ind_inf_id = ?',
+            array($infId)
+        );
 
         // delete all data of this field in the field select options table
-        $sql = 'DELETE FROM ' . TBL_INVENTORY_FIELD_OPTIONS . '
-                 WHERE ifo_inf_id = ? -- $infId';
-        $this->db->queryPrepared($sql, array($infId));
+        $this->deleteDependentRecords(
+            new SelectOptions($this->db, $infId),
+            array('ifo_id'),
+            'ifo_inf_id = ?',
+            array($infId)
+        );
 
         $return = parent::delete();
+
+        LogChanges::endChangeSet($previousChangeSet);
 
         $this->db->endTransaction();
 
@@ -106,8 +132,12 @@ class ItemField extends Entity
 
         $sql = 'SELECT inf_id
                   FROM ' . TBL_INVENTORY_FIELDS . '
-                 WHERE inf_name_intern = ? -- $newNameIntern';
-        $userFieldsStatement = $this->db->queryPrepared($sql, array($newNameIntern));
+                 WHERE inf_org_id = ? -- $this->getValue(\'inf_org_id\')
+                   AND UPPER(inf_name_intern) = UPPER(?) -- $newNameIntern';
+        $userFieldsStatement = $this->db->queryPrepared(
+            $sql,
+            array((int) $this->getValue('inf_org_id'), $newNameIntern)
+        );
 
         if ($userFieldsStatement->rowCount() > 0) {
             ++$index;
@@ -227,8 +257,8 @@ class ItemField extends Entity
         global $gCurrentUser, $gCurrentOrgId;
 
         // only administrators can edit item fields
-        if (!$gCurrentUser->isAdministrator() && !$this->saveChangesWithoutRights) {
-            throw new Exception('Item field could not be saved because only administrators are allowed to edit item fields.');
+        if (!$gCurrentUser->isAdministratorInventory() && !$this->saveChangesWithoutRights) {
+            throw new Exception('Item field could not be saved because only inventory administrators are allowed to edit item fields.');
             // => EXIT
         }
 
@@ -289,6 +319,13 @@ class ItemField extends Entity
      */
     public function setSelectOptions(array $newValues): bool
     {
+        global $gCurrentUser;
+
+        // only administrators can edit item fields
+        if (!$gCurrentUser->isAdministratorInventory()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         return (new SelectOptions($this->db, (int)$this->getValue('inf_id')))->setOptionValues($newValues);
     }
 
@@ -303,8 +340,10 @@ class ItemField extends Entity
     public function getIgnoredLogColumns(): array
     {
         return array_merge(parent::getIgnoredLogColumns(),
-            ['inf_id', 'inf_uuid', 'inf_org_id', 'inf_name_intern', 'inf_system']/* ,
-            ($this->newRecord)?[$this->columnPrefix.'_text']:[] */
+            ['inf_id', 'inf_uuid', 'inf_org_id', 'inf_name_intern', 'inf_system'],
+            // The creation of an item field is already logged with its name, so the initial
+            // setting of the name must not be logged as a change of the field as well.
+            ($this->insertRecord) ? ['inf_name'] : []
         );
     }
 }

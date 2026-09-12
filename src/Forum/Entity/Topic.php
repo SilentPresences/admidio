@@ -49,6 +49,15 @@ class Topic extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'forum_topic';
+    }
+
+    /**
      * Deletes the selected guestbook entry and all comments.
      * After that the class will be initialized.
      * @return bool **true** if no error occurred
@@ -58,16 +67,25 @@ class Topic extends Entity
     {
         $this->db->startTransaction();
 
+        // Deleting a topic is one action of the user, so the topic and its posts belong into one
+        // change set of the changelog.
+        $previousChangeSet = LogChanges::startChangeSet();
+
         // delete reference to first post
         $this->setValue('fot_fop_id_first_post', 0);
         $this->save();
 
         // Delete all available posts to this forum entry
-        $sql = 'DELETE FROM ' . TBL_FORUM_POSTS . '
-                      WHERE fop_fot_id = ? -- $this->getValue(\'fot_id\')';
-        $this->db->queryPrepared($sql, array((int)$this->getValue('fot_id')));
+        $this->deleteDependentRecords(
+            new Post($this->db),
+            array('fop_id'),
+            'fop_fot_id = ?',
+            array((int)$this->getValue('fot_id'))
+        );
 
         $return = parent::delete();
+
+        LogChanges::endChangeSet($previousChangeSet);
 
         $this->db->endTransaction();
 
@@ -193,7 +211,7 @@ class Topic extends Entity
         if ($gSettingsManager->getBool('system_notifications_new_entries')) {
             $notification = new Email();
 
-            if ($this->isNewRecord()) {
+            if ($this->wasInserted()) {
                 $messageTitleText = 'SYS_FORUM_TOPIC_CREATED_TITLE';
                 $messageUserText = 'SYS_CREATED_BY';
                 $messageDateText = 'SYS_CREATED_AT';
@@ -283,9 +301,11 @@ class Topic extends Entity
         }
 
         $this->db->startTransaction();
+        // parent::save() clears the new-record state, so the answer has to be kept before it
+        $newTopic = $this->newRecord;
         $returnCode = parent::save($updateFingerPrint);
 
-        if ($this->newRecord) {
+        if ($newTopic) {
             $this->firstPost->setValue('fop_fot_id', $this->getValue('fot_id'));
             $this->firstPost->save();
             $this->setValue('fot_fop_id_first_post', $this->firstPost->getValue('fop_id'));

@@ -27,25 +27,6 @@ class Text extends Entity
     }
 
     /**
-     * Get the value of a column of the database table.
-     * If the value was manipulated before with **setValue** than the manipulated value is returned.
-     * @param string $columnName The name of the database column whose value should be read
-     * @param string $format For date or timestamp columns the format should be the date/time format e.g. **d.m.Y = '02.04.2011'**.
-     *                           For text columns the format can be **database** that would return the original database value without any transformations
-     * @return mixed Returns the value of the database column.
-     *                    If the value was manipulated before with **setValue** than the manipulated value is returned.
-     * @throws Exception
-     */
-    public function getValue(string $columnName, string $format = ''): mixed
-    {
-        if ($columnName === 'txt_text') {
-            return $this->dbColumns['txt_text'];
-        }
-
-        return parent::getValue($columnName, $format);
-    }
-
-    /**
      * Save all changed columns of the recordset in table of database. Therefore, the class remembers if it's
      * a new record or if only an update is necessary. The update statement will only update
      * the changed columns. If the table has columns for creator or editor than these column
@@ -104,14 +85,12 @@ class Text extends Entity
 //        $textLabel = Language::translateIfTranslationStrId($textLabels[$row['name']]);
         if (array_key_exists($this->columnPrefix.'_name', $this->dbColumns)) {
             $textLabel = $this->dbColumns[$this->columnPrefix.'_name'];
-            if (array_key_exists($textLabel, $textLabels)) {
-                return $textLabels[$textLabel];
-            } else {
-                return $textLabel;
-            }
+            $name = array_key_exists($textLabel, $textLabels) ? $textLabels[$textLabel] : $textLabel;
         } else {
-            return $this->dbColumns[$this->keyColumnName];
+            $name = $this->dbColumns[$this->keyColumnName];
         }
+
+        return $this->filterReadableName($name);
     }
     /**
      * Retrieve the list of database fields that are ignored for the changelog.

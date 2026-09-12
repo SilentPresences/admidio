@@ -4,6 +4,7 @@ namespace Admidio\Roles\ValueObject;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Utils\StringUtils;
+use Admidio\Infrastructure\Utils\DateTimeUtils;
 use DateInterval;
 use DateTime;
 
@@ -115,9 +116,10 @@ class ConditionParser
 
         // validate date and return it in database format
         if ($date !== '') {
-            $dateObject = DateTime::createFromFormat($gSettingsManager->getString('system_date'), $date);
-            if ($dateObject !== false) {
-                return $dateObject->format('Y-m-d');
+            $dateObject = DateTimeUtils::parseDate($date);
+
+            if ($dateObject !== null) {
+                return $db->escapeString($dateObject->format('Y-m-d'));
             }
         }
 

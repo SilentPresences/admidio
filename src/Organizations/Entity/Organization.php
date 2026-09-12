@@ -75,13 +75,47 @@ class Organization extends Entity
         if (is_numeric($organization)) {
             $this->readDataById($organization);
         } else {
-            $this->readDataByColumns(array('org_shortname' => $organization));
+            $this->readDataByShortname($organization);
         }
 
         if ((int)$this->getValue('org_id') > 0) {
             $this->settingsManager = new SettingsManager($database, (int)$this->getValue('org_id'));
             $this->settingsManager->resetAll();
         }
+    }
+
+    /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'organization';
+    }
+
+    /**
+     * Read the organization that carries the given short name.
+     *
+     * The short name identifies the organization in the configuration file, in the login and in the
+     * URL, so the comparison must not depend on the case. MySQL folds it through the collation of
+     * the column, PostgreSQL does not, therefore the statement says so itself.
+     * @param string $shortname The short name of the organization
+     * @return bool Returns **true** if an organization with that short name was found
+     * @throws Exception
+     */
+    public function readDataByShortname(string $shortname): bool
+    {
+        // initialize the object, so that all fields are empty
+        $this->clear();
+
+        $returnCode = $this->readData(' UPPER(org_shortname) = UPPER(?) ', array($shortname));
+
+        // as readDataByColumns() does, keep the name that was searched for when nothing was found
+        if (!$returnCode) {
+            $this->setValue('org_shortname', $shortname);
+        }
+
+        return $returnCode;
     }
 
     /**
@@ -472,6 +506,11 @@ class Organization extends Entity
      */
     public function delete(): bool
     {
+        // The records of the organization are deleted in bulk on purpose and are deliberately not
+        // written to the change history: the history is scoped to an organization itself, so the
+        // entries of a deleted organization could never be viewed again anyway. Everywhere else a
+        // bulk deletion has to go through deleteDependentRecords(), see the class documentation of
+        // ChangelogService.
         $this->db->startTransaction();
 
         // delete all category reports
@@ -779,6 +818,73 @@ class Organization extends Entity
     }
 
     /**
+     * Determine all organization ids that share users with the current organization.
+     * Child organizations inherit the member-sharing preference from their direct parent and
+     * cannot define a separate scope.
+     * @return array<int,int>
+     * @throws Exception
+     */
+    public function getSharedUsersOrganizationIds(): array
+    {
+        $currentOrganizationId = (int)$this->getValue('org_id');
+        $parentOrganizationId = (int)$this->getValue('org_org_id_parent');
+        $sharingRootOrganization = $this;
+
+        if ($parentOrganizationId > 0) {
+            $sharingRootOrganization = new self($this->db, $parentOrganizationId);
+            $settingsManager = $sharingRootOrganization->getSettingsManager();
+        } else {
+            $settingsManager = $this->getSettingsManager();
+        }
+
+        $memberSharingEnabled = $settingsManager->has('contacts_suborganization_use_same_members')
+            && $settingsManager->getBool('contacts_suborganization_use_same_members');
+
+        if (!$memberSharingEnabled) {
+            return array($currentOrganizationId);
+        }
+
+        $sharedOrganizationIds = array_keys($sharingRootOrganization->getOrganizationsInRelationship(true, false));
+        $sharedOrganizationIds[] = (int)$sharingRootOrganization->getValue('org_id');
+
+        if (!in_array($currentOrganizationId, $sharedOrganizationIds, true)) {
+            $sharedOrganizationIds[] = $currentOrganizationId;
+        }
+
+        $sharedOrganizationIds = array_values(array_unique(array_map('intval', $sharedOrganizationIds)));
+        sort($sharedOrganizationIds);
+
+        return $sharedOrganizationIds;
+    }
+
+    /**
+     * Create a comma separated list with all organizations that share users prepared for SQL.
+     * @param bool $shortname If set to true then a list of all short names will be returned.
+     * @return string Returns a comma separated list of organization ids or short names.
+     * @throws Exception
+     */
+    public function getSharedUsersOrganizationsSQL(bool $shortname = false): string
+    {
+        $sharedOrganizationIds = $this->getSharedUsersOrganizationIds();
+
+        if (!$shortname) {
+            return implode(',', $sharedOrganizationIds);
+        }
+
+        $sql = 'SELECT org_shortname
+                  FROM ' . TBL_ORGANIZATIONS . '
+                 WHERE org_id IN (' . Database::getQmForValues($sharedOrganizationIds) . ')';
+        $pdoStatement = $this->db->queryPrepared($sql, $sharedOrganizationIds);
+
+        $organizationShortnames = array();
+        while ($row = $pdoStatement->fetch()) {
+            $organizationShortnames[] = '\'' . $row['org_shortname'] . '\'';
+        }
+
+        return implode(',', $organizationShortnames);
+    }
+
+    /**
      * Read all child and parent organizations of this organization and returns an array with them.
      * @param bool $child If set to **true** (default) then all child organizations will be in the array
      * @param bool $parent If set to **true** (default) then the parent organization will be in the array
@@ -895,7 +1001,7 @@ class Organization extends Entity
      *
      * @return void
      */
-    protected function adjustLogEntry(LogChanges $logEntry) {
+    protected function adjustLogEntry(LogChanges $logEntry): void {
         $orgParentId = (int) $this->getValue('org_org_id_parent');
         if ($orgParentId > 0) {
             $sql = 'SELECT org_id, org_longname, org_shortname
@@ -917,9 +1023,11 @@ class Organization extends Entity
     public function readableName(): string
     {
         if (array_key_exists($this->columnPrefix.'_longname', $this->dbColumns)) {
-            return $this->dbColumns[$this->columnPrefix.'_longname'];
+            $name = $this->dbColumns[$this->columnPrefix.'_longname'];
         } else {
-            return $this->dbColumns[$this->keyColumnName];
+            $name = $this->dbColumns[$this->keyColumnName];
         }
+
+        return $this->filterReadableName($name);
     }
 }

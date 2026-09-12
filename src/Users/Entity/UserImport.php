@@ -17,7 +17,7 @@ use Admidio\Infrastructure\Utils\StringUtils;
  *
  * **Code example**
  * ```
- * // create a valid registration
+ * // import a contact and fill the profile fields that are still empty
  * $userImport = new UserImport($gDb, $gProfileFields);
  * $userImport->setImportMode(UserImport::USER_IMPORT_COMPLETE);
  * $userImport->readDataByFirstnameLastName('Franka', 'Schmidt');
@@ -97,11 +97,11 @@ class UserImport extends User
             INNER JOIN '.TBL_USER_DATA.' AS last_name
                     ON last_name.usd_usr_id = usr_id
                    AND last_name.usd_usf_id = ? -- $gProfileFields->getProperty(\'LAST_NAME\', \'usf_id\')
-                   AND last_name.usd_value  = ? -- $user->getValue(\'LAST_NAME\', \'database\')
+                   AND UPPER(last_name.usd_value) = UPPER(?) -- $user->getValue(\'LAST_NAME\', \'database\')
             INNER JOIN '.TBL_USER_DATA.' AS first_name
                     ON first_name.usd_usr_id = usr_id
                    AND first_name.usd_usf_id = ? -- $gProfileFields->getProperty(\'FIRST_NAME\', \'usf_id\')
-                   AND first_name.usd_value  = ? -- $user->getValue(\'FIRST_NAME\', \'database\')
+                   AND UPPER(first_name.usd_value) = UPPER(?) -- $user->getValue(\'FIRST_NAME\', \'database\')
                  WHERE usr_valid = true';
         $queryParams = array(
             $this->mProfileFieldsData->getProperty('LAST_NAME', 'usf_id'),
@@ -122,7 +122,11 @@ class UserImport extends User
             } elseif ($this->importMode === self::USER_IMPORT_DUPLICATE) {
                 // save as new user
                 $this->clear();
+                $this->initializeNewRecord();
             }
+        } else {
+            // no matching contact, the clear() above left a new record without its defaults
+            $this->initializeNewRecord();
         }
 
         return true;
@@ -134,8 +138,10 @@ class UserImport extends User
      * @param int $mode The following modes could be set:
      *                  USER_IMPORT_NOT_EDIT  Existing users will not be edited.
      *                  USER_IMPORT_DUPLICATE If the user exists a new user will be created.
-     *                  USER_IMPORT_DISPLACE  All profile field values of the import file will be added to the user.
-     *                  USER_IMPORT_COMPLETE  Only profile fields that don't have a value will be added to the user.
+     *                  USER_IMPORT_DISPLACE  All existing profile field values of the user will be deleted first, so
+     *                                        afterwards the user only has the values of the import file.
+     *                  USER_IMPORT_COMPLETE  Only profile fields that don't have a value yet will be filled from the
+     *                                        import file. An existing value is never overwritten and never cleared.
      * @throws Exception
      */
     public function setImportMode(int $mode)
@@ -150,6 +156,7 @@ class UserImport extends User
                 } elseif ($this->importMode === self::USER_IMPORT_DUPLICATE) {
                     // save as new user
                     $this->clear();
+                    $this->initializeNewRecord();
                 }
             }
         }
@@ -286,8 +293,18 @@ class UserImport extends User
                 }
             }
 
-            // if user should be completed than also empty values must be set
-            if ($validValue !== '' || $this->importMode === self::USER_IMPORT_COMPLETE) {
+            if ($this->importMode === self::USER_IMPORT_COMPLETE) {
+                // the completing mode only fills fields that are still empty and never clears a value
+                if ($validValue === '' || (string) $this->getValue($columnName, 'database') !== '') {
+                    return false;
+                }
+
+                return parent::setValue($columnName, $validValue, $checkValue);
+            }
+
+            // every other mode stores the values of the import file but does not clear a field with an empty
+            // column. USER_IMPORT_DISPLACE has already deleted the previous values at this point.
+            if ($validValue !== '') {
                 return parent::setValue($columnName, $validValue, $checkValue);
             }
         }

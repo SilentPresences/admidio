@@ -116,7 +116,7 @@ try {
         } else {
             // show dialog to change password
 
-            $page = PagePresenter::withHtmlIDAndHeadline('admidio-profile-photo-edit', $gL10n->get('SYS_CHANGE_PASSWORD'));
+            $page = PagePresenter::withHtmlIDAndHeadline('adm_password_reset_set_password', $gL10n->get('SYS_CHANGE_PASSWORD'));
 
             // show form
             $form = new FormPresenter(
@@ -174,7 +174,7 @@ try {
                 INNER JOIN ' . TBL_USER_DATA . ' AS email
                         ON email.usd_usr_id = usr_id
                        AND email.usd_usf_id = ? -- $gProfileFields->getProperty(\'EMAIL\', \'usf_id\')
-                       AND email.usd_value  = ? -- $formValues[\'recipient_email\']
+                       AND UPPER(email.usd_value) = UPPER(?) -- $formValues[\'recipient_email\']
                      WHERE LENGTH(usr_login_name) > 0
                        AND rol_valid  = true
                        AND usr_valid  = true
@@ -197,7 +197,7 @@ try {
                         ON cat_id = rol_cat_id
                 INNER JOIN ' . TBL_USERS . '
                         ON usr_id = mem_usr_id
-                     WHERE usr_login_name = ? -- $formValues[\'recipient_email\']
+                     WHERE UPPER(usr_login_name) = UPPER(?) -- $formValues[\'recipient_email\']
                        AND rol_valid  = true
                        AND usr_valid  = true
                        AND mem_begin <= ? -- DATE_NOW
@@ -268,7 +268,7 @@ try {
         $gNavigation->addUrl(CURRENT_URL, $headline);
 
         // create an HTML page object
-        $page = PagePresenter::withHtmlIDAndHeadline('admidio-password-reset', $headline);
+        $page = PagePresenter::withHtmlIDAndHeadline('adm_password_reset', $headline);
 
         // show form
         $form = new FormPresenter(
@@ -285,7 +285,7 @@ try {
         );
 
         // if captchas are enabled, then visitors of the website must resolve this
-        if (!$gValidLogin && $gSettingsManager->getBool('mail_captcha_enabled')) {
+        if (!$gValidLogin && $gSettingsManager->getBool('captcha_enabled')) {
             $form->addCaptcha('adm_captcha_code');
         }
 

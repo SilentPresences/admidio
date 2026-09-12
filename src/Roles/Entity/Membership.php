@@ -7,9 +7,10 @@ use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Entity\Entity;
 use Admidio\Changelog\Entity\LogChanges;
+use Admidio\Changelog\Service\ChangelogService;
+use Admidio\SSO\Service\SSOAccessRevocationService;
 use Admidio\Users\Entity\User;
 use DateTime;
-use Throwable;
 
 /**
  * @brief Handle memberships of roles and manage it in the database table adm_members
@@ -50,49 +51,12 @@ class Membership extends Entity
     }
 
     /**
-     * Set a new value for a column of the database table. The value is only saved in the object.
-     * You must call the method **save** to store the new value to the database. If the unique key
-     * column is set to 0, then this record will be a new record and all other columns are marked as changed.
-     * This method also queues the changes to the field for admin notification
-     * messages. Apart from this, the parent's **setValue** is used to set the new value.
-     * @param string $columnName The name of the database column whose value should get a new value
-     * @param mixed $newValue The new value that should be stored in the database field
-     * @param bool $checkValue The value will be checked if it's valid. If set to **false** then the value will not be checked.
-     * @return bool Returns **true** if the value is stored in the current object and **false** if a check failed
-     * @throws Exception
-     * @see Entity#getValue
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
      */
-    public function setValue(string $columnName, mixed $newValue, bool $checkValue = true): bool
+    public function getHookId(): ?string
     {
-        global $gChangeNotification, $gCurrentSession, $gSettingsManager;
-
-        // New records will be logged in save, because their ID is only generated during first save
-        if (!$this->newRecord && isset($gCurrentSession)) {
-            if (in_array($columnName, array('mem_begin', 'mem_end'))) {
-                $oldValue = $this->getValue($columnName, $gSettingsManager->getString('system_date'));
-            } else {
-                $oldValue = $this->getValue($columnName);
-            }
-            // format the new value in system date format for logging and notification
-            $newValueLogging = $newValue;
-            try {
-                $date = new DateTime($newValue);
-                $newValueLogging = $date->format($gSettingsManager->getString('system_date'));
-            } catch (Throwable) {
-                // not a date, so keep original value
-            }
-            if ($oldValue != $newValueLogging) {
-                $memId = $this->getValue('mem_id');
-                $obj = new self($this->db, $memId);
-                $gChangeNotification->logRoleChange(
-                    $obj,
-                    $columnName,
-                    (string)$oldValue,
-                    (string)$newValueLogging
-                );
-            }
-        }
-        return parent::setValue($columnName, $newValue, $checkValue);
+        return 'membership';
     }
 
     /**
@@ -128,47 +92,65 @@ class Membership extends Entity
     }
 
     /**
-     * Deletes the selected record of the table and optionally sends an admin notification if configured
+     * End the single sign-on access that this membership justified.
+     *
+     * A client whose access is restricted to roles is only checked while an authorization request
+     * is running, so the tokens issued from it would outlive the membership that allowed them.
+     * Nothing happens unless a client actually names this role, which is one cheap query.
+     *
+     * @param int $roleId Role of the membership, by default the one of this record.
+     * @param int $userId User of the membership, by default the one of this record. Both are passed
+     *                    explicitly by delete(), where the record is already gone.
+     * @return void
+     * @throws Exception
+     */
+    private function revokeSSOAccessOfMembership(int $roleId = 0, int $userId = 0): void
+    {
+        if ($roleId === 0) {
+            $roleId = (int) $this->getValue('mem_rol_id');
+        }
+        if ($userId === 0) {
+            $userId = (int) $this->getValue('mem_usr_id');
+        }
+
+        if ($roleId === 0 || $userId === 0) {
+            return;
+        }
+
+        $revocationService = new SSOAccessRevocationService($this->db);
+
+        if (!$revocationService->isRoleUsedForClientAccess($roleId)) {
+            return;
+        }
+
+        $revocationService->revokeLostClientAccess($userId);
+    }
+
+    /**
+     * Deletes the selected record of the table and renews the user object of the affected user
      * @return true Returns **true** if no error occurred
      * @throws Exception
      */
     public function delete(): bool
     {
-        // Queue admin notification about membership deletion
-        global $gChangeNotification, $gCurrentSession, $gSettingsManager;
+        global $gCurrentSession;
 
-        // If this is a new record that hasn't been written to the database, simply ignore it
-        if (!$this->newRecord && is_object($gChangeNotification)) {
-            $memId = $this->getValue('mem_id');
-            $obj = new self($this->db, $memId);
-
-            // Log begin, end and leader as changed (set to NULL)
-            $gChangeNotification->logRoleChange(
-                $obj,
-                'mem_begin',
-                $this->getValue('mem_begin', $gSettingsManager->getString('system_date')),
-                ''
-            );
-            $gChangeNotification->logRoleChange(
-                $obj,
-                'mem_end',
-                $this->getValue('mem_end', $gSettingsManager->getString('system_date')),
-                ''
-            );
-            if ($this->getValue('mem_leader')) {
-                $gChangeNotification->logRoleChange(
-                    $obj,
-                    'mem_leader',
-                    $this->getValue('mem_leader'),
-                    ''
-                );
-            }
+        if (isset($gCurrentSession)) {
+            // renew a user object of the affected user because of edited role assignment
+            $gCurrentSession->reload((int)$this->getValue('mem_usr_id'));
         }
 
-        // renew a user object of the affected user because of edited role assignment
-        $gCurrentSession->reload((int)$this->getValue('mem_usr_id'));
+        $roleId = (int) $this->getValue('mem_rol_id');
+        $userId = (int) $this->getValue('mem_usr_id');
 
-        return parent::delete();
+        $returnStatus = parent::delete();
+
+        // Only now is the membership gone, so only now does the access right answer differently.
+        if ($returnStatus) {
+            $this->revokeSSOAccessOfMembership($roleId, $userId);
+        }
+
+        return $returnStatus;
     }
 
     /**
@@ -182,7 +164,7 @@ class Membership extends Entity
      */
     public function save(bool $updateFingerPrint = true): bool
     {
-        global $gCurrentSession, $gChangeNotification, $gCurrentUser, $gSettingsManager;
+        global $gCurrentSession, $gCurrentUser;
 
         // if a role is administrator than only administrator can add new user,
         // but don't change their own membership, because there must be at least one administrator
@@ -190,7 +172,8 @@ class Membership extends Entity
             throw new Exception('SYS_NO_RIGHTS');
         }
 
-        $newRecord = $this->newRecord;
+        // Remembered before the save, which turns a new record into an existing one.
+        $newRecord = $this->isNewRecord();
 
         $returnStatus = parent::save($updateFingerPrint);
 
@@ -199,36 +182,10 @@ class Membership extends Entity
             $gCurrentSession->reload((int)$this->getValue('mem_usr_id'));
         }
 
-        if ($newRecord && is_object($gChangeNotification)) {
-            // Queue admin notification about membership deletion
-
-            // storing a record for the first time does NOT update the fields from
-            // the role table => need to create a new object that loads the
-            // role name from the database too!
-            $memId = $this->getValue('mem_id');
-            $obj = new self($this->db, $memId);
-
-            // Log begin, end and leader as changed (set to NULL)
-            $gChangeNotification->logRoleChange(
-                $obj,
-                'mem_begin',
-                '',
-                $obj->getValue('mem_begin', $gSettingsManager->getString('system_date'))
-            );
-            $gChangeNotification->logRoleChange(
-                $obj,
-                'mem_end',
-                '',
-                $obj->getValue('mem_end', $gSettingsManager->getString('system_date'))
-            );
-            if ($obj->getValue('mem_leader')) {
-                $gChangeNotification->logRoleChange(
-                    $obj,
-                    'mem_leader',
-                    '',
-                    $obj->getValue('mem_leader')
-                );
-            }
+        if ($returnStatus && !$newRecord) {
+            // A membership that already existed may just have been ended or shortened. A new one
+            // can only add rights, so it cannot cost anybody their single sign-on access.
+            $this->revokeSSOAccessOfMembership();
         }
 
         return $returnStatus;
@@ -374,7 +331,7 @@ class Membership extends Entity
      */
     public function calculateDuration(?string $startDate = null, ?string $endDate = null): array
     {
-        global $gL10n;
+        global $gL10n, $gSettingsManager;
 
         $startDate = $startDate ?? $this->getValue('mem_begin', 'Y-m-d');
         $endDate = $endDate ?? $this->getValue('mem_end', 'Y-m-d');
@@ -404,8 +361,24 @@ class Membership extends Entity
         $months = $interval->m;
         $days = $interval->d;
 
+        $showDetailedDuration = true;
+        if (isset($gSettingsManager) && $gSettingsManager->has('profile_membership_duration_exact')) {
+            $showDetailedDuration = $gSettingsManager->getBool('profile_membership_duration_exact');
+        }
+
         // Format a human-readable string
         $durationText = '';
+
+        if (!$showDetailedDuration) {
+            $durationText = $years . ' ' . ($years === 1 ? $gL10n->get('SYS_YEAR') : $gL10n->get('SYS_YEARS'));
+
+            return [
+                'years' => $years,
+                'months' => $months,
+                'days' => $days,
+                'formatted' => $durationText
+            ];
+        }
 
         if ($years > 0) {
             $durationText .= $years . ' ' . ($years === 1 ? $gL10n->get('SYS_YEAR') : $gL10n->get('SYS_YEARS'));
@@ -453,6 +426,17 @@ class Membership extends Entity
     }
 
     /**
+     * User and role of this membership, each read only once for the changelog entries of one
+     * save operation. adjustLogEntry() is called for every changed column.
+     * @var User|null
+     */
+    private ?User $logUser = null;
+    /**
+     * @var Role|null
+     */
+    private ?Role $logRole = null;
+
+    /**
      * Adjust the changelog entry for this db record.
      *
      * For group memberships, we want to display the user's name as record name
@@ -463,19 +447,81 @@ class Membership extends Entity
      * @return void
      * @throws Exception
      */
+    /**
+     * Write one changelog entry for every membership that the given condition selects. A membership
+     * is logged with the user it belongs to, so adjustLogEntry() reads a User object with all its
+     * profile field data. Deleting a role would read one such object per member, therefore this
+     * method collects the user and the role of the whole set in a single query.
+     *
+     * @param array $identifyingColumns The columns that identify a single membership. They are not
+     *                                  needed here, the whole record is read in one query anyway.
+     * @param string $sqlWhereCondition Condition that selects the memberships, without the leading
+     *                                  keyword WHERE and only with columns of adm_members.
+     * @param array $queryParams Values of the prepared parameters of the condition.
+     * @return int Returns the number of written log entries.
+     * @throws Exception
+     */
+    public function logBulkDeletion(array $identifyingColumns, string $sqlWhereCondition, array $queryParams = array()): int
+    {
+        global $gProfileFields;
+
+        if (!self::$loggingEnabled) return 0;
+        $table = str_replace(TABLE_PREFIX . '_', '', $this->tableName);
+        if (!ChangelogService::isTableLogged($table)) return 0;
+
+        $sql = 'SELECT mem_id, mem_usr_id, usr_uuid, rol_uuid, rol_name,
+                       last_name.usd_value AS last_name, first_name.usd_value AS first_name
+                  FROM ' . TBL_MEMBERS . '
+            INNER JOIN ' . TBL_USERS . '
+                    ON usr_id = mem_usr_id
+            INNER JOIN ' . TBL_ROLES . '
+                    ON rol_id = mem_rol_id
+             LEFT JOIN ' . TBL_USER_DATA . ' AS last_name
+                    ON last_name.usd_usr_id = mem_usr_id
+                   AND last_name.usd_usf_id = ? -- $gProfileFields->getProperty(\'LAST_NAME\', \'usf_id\')
+             LEFT JOIN ' . TBL_USER_DATA . ' AS first_name
+                    ON first_name.usd_usr_id = mem_usr_id
+                   AND first_name.usd_usf_id = ? -- $gProfileFields->getProperty(\'FIRST_NAME\', \'usf_id\')
+                 WHERE ' . $sqlWhereCondition;
+        $queryParams = array_merge(
+            array((int)$gProfileFields->getProperty('LAST_NAME', 'usf_id'), (int)$gProfileFields->getProperty('FIRST_NAME', 'usf_id')),
+            $queryParams
+        );
+        $records = $this->db->queryPrepared($sql, $queryParams)->fetchAll(\PDO::FETCH_ASSOC);
+
+        foreach ($records as $record) {
+            $logEntry = new LogChanges($this->db);
+            $logEntry->setLogDeletion(
+                $table,
+                (int)$record['mem_id'],
+                $record['usr_uuid'],
+                $record['last_name'] . ', ' . $record['first_name']
+            );
+            $logEntry->setLogLinkID((int)$record['mem_usr_id']);
+            $logEntry->setLogRelated($record['rol_uuid'], $record['rol_name']);
+            $logEntry->save();
+        }
+
+        return count($records);
+    }
+
     protected function adjustLogEntry(LogChanges $logEntry): void
     {
         global $gProfileFields;
         $usrId = (int)$this->getValue('mem_usr_id');
+        $rolId = (int)$this->getValue('mem_rol_id');
 
-        $user = new User($this->db, $gProfileFields, $usrId);
-        $logEntry->setValue('log_record_name', $user->readableName());
-        $logEntry->setValue('log_record_uuid', $user->getValue('usr_uuid'));
+        if ($this->logUser === null || (int)$this->logUser->getValue('usr_id') !== $usrId) {
+            $this->logUser = new User($this->db, $gProfileFields, $usrId);
+        }
+        if ($this->logRole === null || (int)$this->logRole->getValue('rol_id') !== $rolId) {
+            $this->logRole = new Role($this->db, $rolId);
+        }
+
+        $logEntry->setValue('log_record_name', $this->logUser->readableName());
+        $logEntry->setValue('log_record_uuid', $this->logUser->getValue('usr_uuid'));
         $logEntry->setLogLinkID($usrId);
 
-        $rolId = $this->getValue('mem_rol_id');
-        $role = new Role($this->db, $rolId);
-
-        $logEntry->setLogRelated($role->getValue('rol_uuid'), $role->getValue('rol_name'));
+        $logEntry->setLogRelated($this->logRole->getValue('rol_uuid'), $this->logRole->getValue('rol_name'));
     }
 }

@@ -35,6 +35,15 @@ class MenuEntry extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'menu_entry';
+    }
+
+    /**
      * Deletes the selected menu entries.
      * After that the class will be initialized.
      * @return bool **true** if no error occurred
@@ -71,7 +80,7 @@ class MenuEntry extends Entity
 
         $sql = 'SELECT men_id
                   FROM '.TBL_MENU.'
-                 WHERE men_name_intern = ? -- $newNameIntern';
+                 WHERE UPPER(men_name_intern) = UPPER(?) -- $newNameIntern';
         $userFieldsStatement = $this->db->queryPrepared($sql, array($newNameIntern));
 
         if ($userFieldsStatement->rowCount() > 0) {
@@ -249,8 +258,8 @@ class MenuEntry extends Entity
      */
     public function setValue(string $columnName, mixed $newValue, bool $checkValue = true): bool
     {
-        if ($newValue !== parent::getValue($columnName) && $checkValue) {
-            if ($columnName === 'men_icon' && $newValue !== '') {
+        if ($newValue !== parent::getValue($columnName)) {
+            if ($checkValue && $columnName === 'men_icon' && $newValue !== '') {
                 // check if bootstrap icons syntax is used
                 if (preg_match('/[^a-z0-9-]/', $newValue)) {
                     throw new Exception('SYS_INVALID_ICON_NAME');
@@ -268,7 +277,7 @@ class MenuEntry extends Entity
      *
      * @return void
      */
-    protected function adjustLogEntry(LogChanges $logEntry) {
+    protected function adjustLogEntry(LogChanges $logEntry): void {
         if (!empty($this->getValue('men_men_id_parent'))) {
             $folEntry = new MenuEntry($this->db, $this->getValue('men_men_id_parent'));
             $logEntry->setLogRelated($folEntry->getValue('men_uuid'), $folEntry->getValue('men_name'));

@@ -354,6 +354,19 @@ label {
 
 .form-separator-line + label {
     font-size: 1.25em;
+    text-decoration: underline;
+}
+
+.admidio-form-separator-label {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    padding-right: calc(var(--bs-gutter-x) * 0.25);
+}
+
+.admidio-form-separator-label .admidio-open-close-caret {
+    flex: 0 0 auto;
+    align-self: center;
 }
 
 @media (min-width: 768px) {
@@ -708,7 +721,6 @@ label {
 
 .admidio-event-highlight .card-header {
     background-color: var(--bs-secondary);
-    color: var(--bs-tertiary);
 }
 
 tr.admidio-event-highlight {
@@ -829,6 +841,21 @@ ul.changelog-tableselect-list {
     list-style-type: none;
 }
 
+/* An area of the change history has three states. Bootstrap fills the indeterminate state with
+   the same colour as the checked one, so an area whose objects are only logged in part would
+   look like a fully logged one. Only the fill is muted here, the dash of Bootstrap is kept. */
+ul.changelog-tableselect-list .form-check-input[type=checkbox]:indeterminate {
+    background-color: #999999;
+    border-color: #999999;
+}
+
+/* The single entries that one change consists of are shown in a table inside the row of that
+   change. It is indented on both sides, so that it is clearly subordinate to its row, and it
+   scrolls on its own if its values are wider than the space that is left. */
+div.adm-changelog-details-table {
+    margin: 0.5rem 6rem;
+}
+
 /************************************/
 /* subinfo form controls (showing/hiding rows) */
 /************************************/
@@ -848,10 +875,10 @@ ul.changelog-tableselect-list {
     padding-bottom: 2pt;
 }
 
-.subinfo-row .form-control-plaintext {
+.subinfo-row .form-text {
   width: 75%;
 }
-.subinfo-sub-row .form-control-plaintext {
+.subinfo-sub-row .form-text {
   width: 75%;
   padding-bottom: 0;
   padding-top: 0;

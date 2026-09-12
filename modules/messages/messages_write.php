@@ -35,6 +35,7 @@ use Admidio\Roles\Entity\Role;
 use Admidio\UI\Presenter\FormPresenter;
 use Admidio\UI\Presenter\PagePresenter;
 use Admidio\Users\Entity\User;
+use Ramsey\Uuid\Uuid;
 
 try {
     require_once(__DIR__ . '/../../system/common.php');
@@ -55,6 +56,15 @@ try {
     if ($gValidLogin) {
         $postUserUuidList = admFuncVariableIsValid($_POST, 'userUuidList', 'string');
         $postListUuid = admFuncVariableIsValid($_POST, 'list_uuid', 'uuid');
+
+        if ($postUserUuidList !== '') {
+            $userUuidListArray = explode(',', $postUserUuidList);
+            foreach ($userUuidListArray as $key => $userUuid) {
+                if (!Uuid::isValid($userUuid)) {
+                    throw new Exception('SYS_INVALID_PAGE_VIEW');
+                }
+            }
+        }
     }
 
     $message = new Message($gDb);
@@ -193,7 +203,7 @@ try {
     }
 
     // create html page object
-    $page = PagePresenter::withHtmlIDAndHeadline('admidio-messages-write', $headline);
+    $page = PagePresenter::withHtmlIDAndHeadline('adm_messages_write', $headline);
 
     if ($getMsgType === Message::MESSAGE_TYPE_PM) {
         // show form
@@ -601,7 +611,7 @@ try {
         }
 
         // if captchas are enabled then visitors of the website must resolve this
-        if (!$gValidLogin && $gSettingsManager->getBool('mail_captcha_enabled')) {
+        if (!$gValidLogin && $gSettingsManager->getBool('captcha_enabled')) {
             $form->addCaptcha('adm_captcha_code');
         }
 

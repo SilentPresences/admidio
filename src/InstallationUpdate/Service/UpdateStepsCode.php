@@ -9,6 +9,7 @@ use Admidio\Infrastructure\Utils\FileSystemUtils;
 use Admidio\Infrastructure\Utils\Maintenance;
 use Admidio\Inventory\Entity\ItemField;
 use Admidio\Organizations\Entity\Organization;
+use Admidio\Preferences\Service\PreferencesService;
 use Admidio\ProfileFields\Entity\ProfileField;
 use Admidio\Roles\Entity\ListConfiguration;
 use Admidio\Roles\Entity\RolesRights;
@@ -44,6 +45,70 @@ final class UpdateStepsCode
     public static function setDatabase(Database $database): void
     {
         self::$db = $database;
+    }
+
+    /**
+     * Re-hash existing SSO/OIDC token identifiers in place. As of this update, TokenEntity
+     * stores only a SHA-256 hash of access/refresh token and auth code identifiers instead
+     * of the plaintext value, so lookups by presented token now hash before querying.
+     * Existing rows still hold the plaintext identifier and must be converted, or every
+     * outstanding access/refresh token would stop validating immediately after the update.
+     *
+     * @throws Exception
+     */
+    public static function updateStep51HashSsoTokenIdentifiers(): void
+    {
+        $tokenColumns = array(
+            TBL_OIDC_ACCESS_TOKENS  => array('id' => 'oat_id', 'token' => 'oat_token'),
+            TBL_OIDC_REFRESH_TOKENS => array('id' => 'ort_id', 'token' => 'ort_token'),
+            TBL_OIDC_AUTH_CODES     => array('id' => 'oac_id', 'token' => 'oac_token'),
+        );
+
+        foreach ($tokenColumns as $table => $columns) {
+            $selectSql = 'SELECT ' . $columns['id'] . ' AS id, ' . $columns['token'] . ' AS token FROM ' . $table;
+            $statement = self::$db->queryPrepared($selectSql);
+
+            while ($row = $statement->fetch()) {
+                // A 64-char lowercase hex string is already a SHA-256 hash - running this step
+                // twice (e.g. on a retried update) must not double-hash already-migrated rows.
+                if (preg_match('/^[0-9a-f]{64}$/', (string) $row['token']) === 1) {
+                    continue;
+                }
+
+                $updateSql = 'UPDATE ' . $table . ' SET ' . $columns['token'] . ' = ? WHERE ' . $columns['id'] . ' = ?';
+                self::$db->queryPrepared($updateSql, array(hash('sha256', (string) $row['token']), $row['id']));
+            }
+        }
+    }
+
+    /**
+     * Report the OIDC clients whose subject is a value that can change or be reassigned.
+     * OpenID Connect requires the subject to be unique and never reassigned, so a login name
+     * and an e-mail address are no longer offered when a client is edited. The stored value
+     * is deliberately left alone: changing it would give the relying party a new subject for
+     * the same person, and every account it has bound to the old subject would be orphaned.
+     * The administrator has to make that decision, so this step only names the clients.
+     *
+     * @throws Exception
+     */
+    public static function updateStep51WarnAboutMutableOIDCSubjects(): void
+    {
+        global $gLogger, $gL10n;
+
+        $sql = 'SELECT ocl_client_name, ocl_userid_field
+                  FROM ' . TBL_OIDC_CLIENTS . '
+                 WHERE ocl_userid_field NOT IN (\'usr_uuid\', \'usr_id\')
+                 ORDER BY ocl_client_name';
+        $statement = self::$db->queryPrepared($sql);
+
+        $clients = array();
+        while ($row = $statement->fetch()) {
+            $clients[] = $row['ocl_client_name'] . ' (' . $row['ocl_userid_field'] . ')';
+        }
+
+        if (count($clients) > 0) {
+            $gLogger->warning($gL10n->get('INS_WARNING_SSO_OIDC_MUTABLE_SUBJECT', array(implode(', ', $clients))));
+        }
     }
 
     /**
@@ -186,6 +251,36 @@ final class UpdateStepsCode
                 $instance->doInstall();
             }
         }
+    }
+
+    /**
+     * Give every organization a row for every preference of every plugin.
+     *
+     * Until now a plugin wrote its preferences with the settings manager of the organization the
+     * administrator happened to be in, so every other organization had none. Reading one of them
+     * there answered a registered default instead of a stored value, which is not what a
+     * preference is.
+     *
+     * @throws Exception
+     */
+    public static function updateStep51SeedPluginPreferences(): void
+    {
+        $pluginManager = new PluginManager();
+        $names = array();
+
+        foreach ($pluginManager->getAvailablePlugins() as $plugin) {
+            if (!isset($plugin['interface']) || $plugin['interface'] === null) {
+                continue;
+            }
+
+            // reading the metadata registers the definitions of the plugin
+            $instance = $plugin['interface']::getInstance();
+            if ($instance->isInstalled()) {
+                $names = array_merge($names, $instance->getPreferenceNames());
+            }
+        }
+
+        PreferencesService::seedDefaults(array_values(array_unique($names)));
     }
 
     /**

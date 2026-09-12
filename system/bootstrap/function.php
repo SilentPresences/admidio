@@ -9,10 +9,13 @@
  ***********************************************************************************************
  */
 
+use Admidio\Hooks\Hooks;
+use Admidio\Infrastructure\Utils\DateTimeUtils;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Infrastructure\Utils\StringUtils;
 use Admidio\Users\Entity\User;
 use Ramsey\Uuid\Uuid;
+use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
 
 if (basename($_SERVER['SCRIPT_FILENAME']) === 'function.php') {
@@ -22,15 +25,27 @@ if (basename($_SERVER['SCRIPT_FILENAME']) === 'function.php') {
 /**
  * This function handles exceptions and shows the error message.
  * If **jsonResponse** is set to true, then the error message will be returned as JSON object.
+ *
+ * The request ends here, so an open transaction is rolled back first. That is the only place where
+ * an exception discards what the request has written; building an exception object does not.
  * @param Throwable $e The exception that should be handled
  * @param bool $jsonResponse (optional) If set to true than the error message will be returned as JSON object
+ * @param bool $inlineResponse (optional) If set to true than the error message will be returned as inline HTML without header and footer
  * @return void
  */
-function handleException(Throwable $e, bool $jsonResponse = false): void
+function handleException(Throwable $e, bool $jsonResponse = false, bool $inlineResponse = false): void
 {
-    global $gDebug, $gMessage;
+    global $gDebug, $gMessage, $gHtmlPurifierFilter, $gDb;
 
-    $message = $e->getMessage();
+    if ($gDb instanceof Database) {
+        $gDb->rollback();
+    }
+
+    // The request ends here. A listener may report the exception, but it must not be able to replace
+    // it with one of its own, so this is a doActionCatchErrors() site.
+    Hooks::doActionCatchErrors('exception_terminating', $e, $jsonResponse);
+
+    $message = $gHtmlPurifierFilter->purify($e->getMessage());
 
     if ($gDebug) {
         $message .= ' in ' . $e->getFile() . ', in line ' . $e->getLine() . '<br /><br />Stacktrace:<br />' . $e->getTraceAsString();
@@ -41,9 +56,12 @@ function handleException(Throwable $e, bool $jsonResponse = false): void
     } else {
         if (isset($gMessage)) {
             try {
+                if ($inlineResponse) {
+                    $gMessage->showHtmlTextOnly();
+                }
                 $gMessage->show($message);
             } catch (Throwable $exceptionMessage) {
-                echo $exceptionMessage->getMessage();
+                echo $gHtmlPurifierFilter->purify($exceptionMessage);
             }
         } else {
             echo $message;
@@ -310,7 +328,7 @@ function admFuncGeneratePagination(string $baseUrl, int $itemsCount, int $itemsP
  */
 function admFuncVariableIsValid(array $array, string $variableName, string $datatype, array $options = array()): mixed
 {
-    global $gSettingsManager;
+    global $gSettingsManager, $gHtmlPurifierFilter;
 
     // create an array with all options
     $optionsDefault = array('defaultValue' => null, 'requireValue' => false, 'validValues' => null, 'directOutput' => null);
@@ -318,13 +336,10 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
 
     // set the default value for each datatype if no value is given and no value was required
     if (array_key_exists($variableName, $array) && $array[$variableName] !== '') {
-        if ($datatype === 'bool' || $datatype === 'boolean') {
-            $value = (bool)$array[$variableName];
-        } elseif ($datatype === 'numeric' || $datatype === 'int') {
-            $value = (int)$array[$variableName];
-        } elseif ($datatype === 'float') {
-            $value = (float)$array[$variableName];
-        } elseif ($datatype === 'array') {
+        if ($datatype === 'bool' || $datatype === 'boolean'
+            || $datatype === 'numeric' || $datatype === 'int' || $datatype === 'float'
+            || $datatype === 'array') {
+            // Keep the original value until it has been validated below.
             $value = $array[$variableName];
         } else {
             $value = (string)$array[$variableName];
@@ -356,10 +371,21 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
         }
     }
 
-    // check if parameter has a valid value
-    // do a strict check with in_array because the function doesn't work properly
-    if ($optionsAll['validValues'] !== null && !in_array($value, $optionsAll['validValues'], true)) {
-        throw new Exception('The parameter "' . $variableName . '" has an invalid value!');
+    if ($optionsAll['validValues'] !== null) {
+        // A parameter that is restricted to a set of allowed values is returned exactly as it is
+        // listed there. Without this the datatype conversion below would rewrite it: a string is
+        // stripped and HTML encoded, which turns the double quote of the CSV import into &quot; and
+        // also stops it from ever matching the list again.
+        if (in_array($value, $optionsAll['validValues'], true)) {
+            return $value;
+        }
+
+        // bool, int, float and numeric only get their real type in the switch below, so for them the
+        // comparison is repeated after the conversion. Every other datatype is checked on the value
+        // as it arrived, which is what the caller has listed.
+        if (!in_array($datatype, array('bool', 'boolean', 'int', 'float', 'numeric'), true)) {
+            throw new Exception('The parameter "' . $variableName . '" has an invalid value!');
+        }
     }
 
     switch ($datatype) {
@@ -371,16 +397,8 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
             break;
 
         case 'date':
-            // check if date is a valid Admidio date format
-            $objAdmidioDate = DateTime::createFromFormat($gSettingsManager->getString('system_date'), $value);
-
-            if (!$objAdmidioDate) {
-                // check if date has english format
-                $objEnglishDate = DateTime::createFromFormat('Y-m-d', $value);
-
-                if (!$objEnglishDate) {
-                    throw new Exception('The date parameter "' . $variableName . '" has an invalid date format!');
-                }
+            if (DateTimeUtils::parseDate($value) === null) {
+                throw new Exception('The date parameter "' . $variableName . '" has an invalid date format!');
             }
             break;
 
@@ -393,22 +411,29 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
             $value = $valid;
             break;
 
-        case 'int': // fallthrough
-        case 'float': // fallthrough
-        case 'numeric':
-            // numeric datatype should only contain numbers
+        case 'int':
+            if (is_int($value)) {
+                break;
+            }
+            if (!is_string($value) || preg_match('/^[+-]?\d+$/D', $value) !== 1) {
+                throw new Exception('The numeric parameter ' . $variableName . ' has an invalid value!');
+            }
+            $value = (int) $value;
+            break;
+
+        case 'float':
             if (!is_numeric($value)) {
                 throw new Exception('The numeric parameter ' . $variableName . ' has an invalid value!');
-            } else {
-                if ($datatype === 'int') {
-                    $value = filter_var($value, FILTER_VALIDATE_INT);
-                } elseif ($datatype === 'float') {
-                    $value = filter_var($value, FILTER_VALIDATE_FLOAT);
-                } else {
-                    // https://www.php.net/manual/en/function.is-numeric.php#107326
-                    $value += 0;
-                }
             }
+            $value = (float) $value;
+            break;
+
+        case 'numeric':
+            if (!is_numeric($value)) {
+                throw new Exception('The numeric parameter ' . $variableName . ' has an invalid value!');
+            }
+            // https://www.php.net/manual/en/function.is-numeric.php#107326
+            $value += 0;
             break;
 
         case 'string':
@@ -417,13 +442,7 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
 
         case 'html':
             // check HTML string vor invalid tags and scripts
-            $config = HTMLPurifier_Config::createDefault();
-            $config->set('HTML.Doctype', 'HTML 4.01 Transitional');
-            $config->set('Attr.AllowedFrameTargets', array('_blank', '_top', '_self', '_parent'));
-            $config->set('Cache.SerializerPath', ADMIDIO_PATH . FOLDER_DATA . '/templates');
-
-            $filter = new HTMLPurifier($config);
-            $value = $filter->purify($value);
+            $value = $gHtmlPurifierFilter->purify($value);
             break;
 
         case 'uuid':
@@ -433,10 +452,15 @@ function admFuncVariableIsValid(array $array, string $variableName, string $data
             break;
 
         case 'url':
-            if (!StringUtils::strValidCharacters($value, 'url')) {
+            if (!StringUtils::strValidCharacters($value, 'url')
+                || !in_array(strtolower((string) parse_url($value, PHP_URL_SCHEME)), array('http', 'https'), true)) {
                 throw new Exception('The parameter "' . $variableName . '" has an invalid URL!');
             }
             break;
+    }
+
+    if ($optionsAll['validValues'] !== null && !in_array($value, $optionsAll['validValues'], true)) {
+        throw new Exception('The parameter "' . $variableName . '" has an invalid value!');
     }
 
     return $value;
@@ -692,5 +716,4 @@ function getThemedFile(string $filePath): string
     }
     return $themePath;
 }
-
 

@@ -1,6 +1,8 @@
 <?php
 namespace Admidio\Components\Entity;
 
+use Admidio\Changelog\Service\ChangelogService;
+use Admidio\Hooks\Hooks;
 use Admidio\Documents\Entity\Folder;
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Database;
@@ -44,6 +46,15 @@ class Component extends Entity
     public function __construct(Database $database, int $comId = 0)
     {
         parent::__construct($database, TBL_COMPONENTS, 'com', $comId);
+    }
+
+    /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'component';
     }
 
     /**
@@ -110,12 +121,33 @@ class Component extends Entity
     /**
      * This method checks if the current user is allowed to edit and administrate the component. Therefore,
      * special checks for each component were done.
+     *
+     * The answer passes through the **component_administrable** filter, which receives the answer and
+     * the name of the component. It is the one place that decides who may administrate a module, for
+     * the menu, for the modules themselves and for the CLI, so a plugin that adds a right of its own
+     * changes it here instead of in every module. It has to answer with a **bool**, which
+     * Hooks::applyTypedFilters() enforces: a permission must not be decided by whatever happens to be
+     * truthy. A filter can grant as well as revoke, so a callback that only wants to restrict has to
+     * return the answer it was given unless it means to widen it.
+     *
      * @param string $componentName The name of the component that is stored in the column com_name_intern e.g. GROUPS-ROLES
-     * @return bool Return true if the current user is allowed to view the component
+     * @return bool Return true if the current user is allowed to administrate the component
      * @throws \InvalidArgumentException
      * @throws \UnexpectedValueException|Exception
      */
     public static function isAdministrable(string $componentName): bool
+    {
+        return Hooks::applyTypedFilters('component_administrable', self::checkAdministrable($componentName), $componentName);
+    }
+
+    /**
+     * The rights of Admidio itself, without the hook. isAdministrable() is the answer everybody uses.
+     * @param string $componentName The name of the component.
+     * @return bool Return true if the current user is allowed to administrate the component
+     * @throws \InvalidArgumentException
+     * @throws \UnexpectedValueException|Exception
+     */
+    private static function checkAdministrable(string $componentName): bool
     {
         global $gCurrentUser;
 
@@ -214,12 +246,30 @@ class Component extends Entity
     /**
      * This method checks if the current user is allowed to view the component. Therefore,
      * special checks for each component were done.
+     *
+     * The answer passes through the **component_visible** filter, which receives the answer and the
+     * name of the component. It decides which entries the menu shows, which modules may be opened and
+     * which commands the CLI offers, so it is a permission decision: the filter has to answer with a
+     * **bool** and it can grant as well as revoke. See isAdministrable() for the rest of the contract.
+     *
      * @param string $componentName The name of the component that is stored in the column com_name_intern e.g. GROUPS-ROLES
      * @return bool Return true if the current user is allowed to view the component
      * @throws \InvalidArgumentException
      * @throws \UnexpectedValueException|Exception
      */
     public static function isVisible(string $componentName): bool
+    {
+        return Hooks::applyTypedFilters('component_visible', self::checkVisible($componentName), $componentName);
+    }
+
+    /**
+     * The rights of Admidio itself, without the hook. isVisible() is the answer everybody uses.
+     * @param string $componentName The name of the component.
+     * @return bool Return true if the current user is allowed to view the component
+     * @throws \InvalidArgumentException
+     * @throws \UnexpectedValueException|Exception
+     */
+    private static function checkVisible(string $componentName): bool
     {
         global $gValidLogin, $gCurrentUser, $gSettingsManager, $gDb;
 
@@ -239,7 +289,20 @@ class Component extends Entity
                 break;
 
             case 'CATEGORY-REPORT':
-                if ($gCurrentUser->checkRolesRight('rol_all_lists_view')) {
+                if ($gSettingsManager->getBool('category_report_module_enabled')
+                && $gCurrentUser->checkRolesRight('rol_all_lists_view')) {
+                    return true;
+                }
+                break;
+
+            case 'CHANGELOG':
+                // The change history is visible as soon as the user may read the log of at least
+                // one database table, which is not restricted to administrators: the administrator
+                // of a single module may read the log of that module, and every user may read the
+                // history of his/her own profile. getReadableTables() is the same method the
+                // module itself uses, and it also evaluates changelog_module_enabled, so the menu
+                // entry disappears when the changelog is switched off or limited to administrators.
+                if ($gValidLogin && count(ChangelogService::getReadableTables($gCurrentUser)) > 0) {
                     return true;
                 }
                 break;
@@ -269,7 +332,7 @@ class Component extends Entity
                 || ($gSettingsManager->getInt('inventory_module_enabled') === 2 && $gValidLogin)
                 || ($gSettingsManager->getInt('inventory_module_enabled') === 3 && $gCurrentUser->isAdministratorInventory())
                 || ($gSettingsManager->getInt('inventory_module_enabled') === 4 && ($gCurrentUser->isAdministratorInventory() || InventoryPresenter::isCurrentUserKeeper()))
-                || ($gSettingsManager->getInt('inventory_module_enabled') === 5 && $gCurrentUser->isAllowedToSeeInventory())) {
+                || ($gSettingsManager->getInt('inventory_module_enabled') === 5 && $gCurrentUser->isAllowedToViewInventory())) {
                     return true;
                 }
                 break;
@@ -334,7 +397,7 @@ class Component extends Entity
             default:
                 // check if the component is a plugin and it is visible
                 $pluginManager = new PluginManager();
-                $plugin = $pluginManager->getPluginByName($componentName);
+                $plugin = $pluginManager->getPluginByComponentName($componentName);
                 if ($plugin) {
                     return ($plugin instanceof PluginAbstract) ? $plugin::getInstance()->isVisible() : false;
                 }

@@ -328,13 +328,28 @@
   <string name="SYS_CATEGORY_VISIBLE_ALL_ORGA">Ist diese Option aktiviert, erscheinen die Profilfelder dieser Kategorie auch im Profil folgender Organisationen und können dort ebenfalls gepflegt werden: #VAR1#.\n\nMöchten Sie die Daten nur in Ihrer Organisation sehen, dann sollte diese Option deaktiviert werden.</string>
   <string name="SYS_CHANGE_DATE">Datum ändern</string>
   <string name="SYS_CHANGE_HISTORY">Änderungshistorie</string>
+  <string name="SYS_CHANGE_HISTORY_DESC">Übersicht über alle Datenänderungen mit dem Zeitpunkt und Benutzer der Änderung</string>
   <string name="SYS_CHANGE_HISTORY_GENERIC">Änderungshistorie: #VAR1#</string>
   <string name="SYS_CHANGE_HISTORY_GENERIC2">Änderungshistorie: #VAR1# (#VAR2#)</string>
+  <string name="SYS_CHANGE_HISTORY_NO_ENTRIES">Im ausgewählten Zeitraum wurden keine Änderungen aufgezeichnet. Es werden nur jene Änderungen aufgezeichnet, die in den Einstellungen der Änderungshistorie aktiviert sind.</string>
   <string name="SYS_CHANGE_HISTORY_OF">Änderungshistorie von #VAR1#</string>
   <string name="SYS_CHANGE_HISTORY_USERDATA">Änderungshistorie der Benutzerdaten und Mitgliedschaften</string>
   <string name="SYS_CHANGE_PASSWORD">Passwort ändern</string>
   <string name="SYS_CHANGED_AT">Geändert am</string>
   <string name="SYS_CHANGED_BY">Geändert von</string>
+  <string name="SYS_CHANGELOG_AREA_PROFILE_ROLE_SETTINGS">Profil- und Rolleneinstellungen</string>
+  <string name="SYS_CHANGELOG_AREA_REPORTS">Listen und Auswertungen</string>
+  <string name="SYS_CHANGELOG_AREA_USER_PROFILE">Benutzerprofil und Rollen</string>
+  <string name="SYS_CHANGELOG_CHANGED_ENTRIES">#VAR1# Einträge</string>
+  <string name="SYS_CHANGELOG_DEFAULT_DAYS">Standard-Anzeigezeitraum der Änderungshistorie (Tage)</string>
+  <string name="SYS_CHANGELOG_DEFAULT_DAYS_DESC">Die Änderungshistorie wird standardmäßig für den angegebenen Zeitraum in Tagen angezeigt. Das ist nur die Voreinstellung des Filters, die auf der Seite der Änderungshistorie von jedem Benutzer geändert werden kann. Mit dem Wert 0 wird die vollständige Änderungshistorie ohne Datumseinschränkung angezeigt. (Standard: 365)</string>
+  <string name="SYS_CHANGELOG_GROUP_CHANGES">Änderungen gruppieren</string>
+  <string name="SYS_CHANGELOG_PURGE">Alte Einträge jetzt löschen</string>
+  <string name="SYS_CHANGELOG_PURGE_CONFIRM">Möchten Sie wirklich alle Einträge der Änderungshistorie löschen, die älter als die Aufbewahrungsdauer sind? Das kann nicht rückgängig gemacht werden.</string>
+  <string name="SYS_CHANGELOG_PURGE_RESULT">#VAR1# Einträge der Änderungshistorie wurden gelöscht.</string>
+  <string name="SYS_CHANGELOG_PURGE_SAVE_FIRST">Bitte zuerst die geänderte Aufbewahrungsdauer speichern, gelöscht wird mit der gespeicherten Dauer.</string>
+  <string name="SYS_CHANGELOG_RETENTION_DAYS">Aufbewahrungsdauer der Änderungshistorie (Tage)</string>
+  <string name="SYS_CHANGELOG_RETENTION_DAYS_DESC">Einträge der Änderungshistorie, die älter als die angegebene Anzahl an Tagen sind, werden gelöscht. Mit dem Wert 0 wird die Änderungshistorie unbegrenzt aufbewahrt. Es werden immer nur die ältesten Einträge entfernt, die Historie eines einzelnen Datensatzes kann nicht gezielt gelöscht werden. (Standard: 0)</string>
   <string name="SYS_CHARACTERS">Zeichen</string>
   <string name="SYS_CHECK_FOR_UPDATE">nach Update suchen</string>
   <string name="SYS_CHECKBOX">Checkbox</string>
@@ -442,6 +457,7 @@
   <string name="SYS_CURRENT_PROFILE_PICTURE">Aktuelles Profilfoto</string>
   <string name="SYS_CURRENT_ROLE_MEMBERSHIP">Aktuelle Rollenmitgliedschaften</string>
   <string name="SYS_CURRENT_USER_NO_EMAIL" description="Var1 und Var2 erzeugen den Profil-Link">Sie haben keine gültige E-Mail-Adresse hinterlegt!\n\nTragen Sie bitte in Ihrem #VAR1#Profil#VAR2# eine E-Mail-Adresse ein.</string>
+  <string name="SYS_DATA_AREA">Bereich</string>
   <string name="SYS_DATA_CATEGORY_GLOBAL">Ist diese Option aktiviert, so sind die Objekte (Veranstaltungen, Ankündigungen, Weblinks ...) dieser Kategorie auch auf den Webseiten folgender Organisationen sichtbar:\n#VAR1_BOLD#</string>
   <string name="SYS_DATA_MULTI_ORGA">Daten für mehrere Organisationen sichtbar</string>
   <string name="SYS_DATA_PROTECTION">Datenschutz</string>
@@ -642,7 +658,7 @@
   <string name="SYS_END_MEMBERSHIP_OF_USERS_OK">Die Mitgliedschaften der ausgewählten Benutzer bei #VAR1_BOLD# wurde erfolgreich beendet!</string>
   <string name="SYS_ENTRY">Eintrag</string>
   <string name="SYS_ERROR">Fehler</string>
-  <string name="SYS_ERROR_DELETE_DEFAULT_LIST">Die Liste #VAR1_BOLD# ist als Standardkonfiguration für das Modul #VAR1# in dieser Organisation hinterlegt und kann nicht gelöscht werden. Wählen Sie in den Moduleinstellungen eine andere Konfiguration zur Standardkonfiguration und versuchen Sie danach diese Konfiguration zu löschen.</string>
+  <string name="SYS_ERROR_DELETE_DEFAULT_LIST">Die Liste #VAR1_BOLD# ist als Standardkonfiguration für das Modul #VAR2# in dieser Organisation hinterlegt und kann nicht gelöscht werden. Wählen Sie in den Moduleinstellungen eine andere Konfiguration zur Standardkonfiguration und versuchen Sie danach diese Konfiguration zu löschen.</string>
   <string name="SYS_ERROR_PAGE_NOT_FOUND">ERROR 404 - Seite nicht gefunden!</string>
   <string name="SYS_ERROR_UUID_MISSING">UUID fehlt</string>
   <string name="SYS_EVENT">Veranstaltung</string>
@@ -752,10 +768,9 @@
   <string name="SYS_GROUPS_ROLES_DESC">Übersicht und Verwaltung aller Gruppen und Rollen der Organisation. Es können verschiedene Mitgliederlisten angezeigt, exportiert und eigene Listen erstellt werden.</string>
   <string name="SYS_HALF_YEARLY">Halbjährlich</string>
   <string name="SYS_HEADER_ALREADY_SENT">HTTP-Header wurden bereits gesendet!</string>
-  <string name="SYS_HEADER_CONTENT_MODULES">Inhaltsmodule (Dokumente, Veranstaltungen, Ankündigungen usw.)</string>
-  <string name="SYS_HEADER_PREFERENCES">Allgemeine Einstellungen</string>
+  <string name="SYS_HEADER_CONTENT_MODULES">Inhaltsmodule und Plugins</string>
+  <string name="SYS_HEADER_PREFERENCES">Einstellungen</string>
   <string name="SYS_HEADER_USER_ROLE_DATA">Benutzerprofildaten und Rollen</string>
-  <string name="SYS_HEADER_USER_ROLE_SETTINGS">Einstellungen für Benutzer und Gruppen/Rollen</string>
   <string name="SYS_HEADLINE">Überschrift</string>
   <string name="SYS_HIDDEN">Versteckt</string>
   <string name="SYS_HIGHLIGHT_EVENT">Veranstaltung optisch hervorheben</string>
@@ -973,8 +988,8 @@
   <string name="SYS_LOG_ALLOW_DELETION">Löschen der Änderungshistorie zulassen</string>
   <string name="SYS_LOG_ALLOW_DELETION_DESC">Aktivieren Sie eine Schaltfläche auf der Änderungshistorienseite, um Teile oder den gesamten Verlauf des Änderungsprotokolls zu löschen.</string>
   <string name="SYS_LOG_RECORDS_HIDDEN">Einige oder alle Änderungshistorien-Einträge wurden ausgeblendet, weil die Benutzerrechte für den Zugriff nicht ausreichen.</string>
-  <string name="SYS_LOGGED_TABLES">Protokollierte Tabellen</string>
-  <string name="SYS_LOGGED_TABLES_DESC">Wählen Sie alle Arten von Objekten für die Änderungshistorie aus. Für diese Objekte werden alle individuellen Änderungen in der Änderungshistorie mit altem und neuem Wert sowie Änderungszeit und Benutzer protokolliert. Wenn ein Objekttyp abgewählt wird, werden bestehende Protokolleinträge nicht gelöscht. Dies kann auf der Seite Änderungshistorie eingestellt werden.</string>
+  <string name="SYS_LOGGED_AREAS">Protokollierte Bereiche</string>
+  <string name="SYS_LOGGED_AREAS_DESC">Wählen Sie die Bereiche aus, für die die Änderungshistorie geführt wird. Jede Änderung an einem Objekt eines ausgewählten Bereichs wird mit altem und neuem Wert sowie Änderungszeit und Benutzer protokolliert. Bereiche von deaktivierten Modulen werden nicht angezeigt. Wird ein Bereich abgewählt, werden bestehende Protokolleinträge nicht gelöscht. Dies kann auf der Seite Änderungshistorie erfolgen. Ein Bereich, dessen Objekte nur teilweise protokolliert werden, wird in einem dritten, unbestimmten Zustand angezeigt und bleibt unverändert, bis Sie ihn ein- oder ausschalten.</string>
   <string name="SYS_LOGIN">Anmelden</string>
   <string name="SYS_LOGIN_MAX_INVALID_LOGIN">Sie haben mehrmals innerhalb kurzer Zeit versucht, sich mit einem falschen Passwort einzuloggen.\nAus Sicherheitsgründen ist Ihr Zugang für 15 Minuten gesperrt.</string>
   <string name="SYS_LOGIN_NAME_EXIST">Der gewählte Anmeldename existiert schon.\n\nWähle bitte einen anderen Namen.</string>
@@ -1436,7 +1451,7 @@
   <string name="SYS_SEND_EMAIL_FORMER_DESC">Ist diese Einstellung gesetzt, dann können E-Mails an einzelne ehemalige Mitglieder, sowie an alle ehemaligen Mitglieder einer Rolle gesendet werden. (Voreinstellung: ja)</string>
   <string name="SYS_SEND_EMAIL_TO">Sende eine E-Mail an #VAR1#</string>
   <string name="SYS_SEND_EMAIL_TO_ALL_ADDRESSES">E-Mails an alle E-Mail-Adressen der Benutzerin bzw. des Benutzers senden</string>
-  <string name="SYS_SEND_EMAIL_TO_ALL_ADDRESSES_DESC">Ist diese Einstellung aktiviert, werden E-Mails an alle im Profil hinterlegten E-Mail-Adressen der Benutzerin oder des Benutzers gesendet. Ist die Einstellung deaktiviert, werden E-Mails nur an die E-Mail-Adresse aus dem Profilfeld mit dem internen Namen EMAIL gesendet. (Voreinstellung: ja)</string>
+  <string name="SYS_SEND_EMAIL_TO_ALL_ADDRESSES_DESC">Ist diese Einstellung aktiviert, werden E-Mails an alle im Profil hinterlegten E-Mail-Adressen der Benutzerin oder des Benutzers gesendet. Ist die Einstellung deaktiviert, werden E-Mails nur an die E-Mail-Adresse aus dem Profilfeld mit dem internen Namen EMAIL gesendet. (Voreinstellung: nein)</string>
   <string name="SYS_SEND_GREETING_CARD">Grußkarte versenden</string>
   <string name="SYS_SEND_LOGIN_INFORMATION">Zugangsdaten versenden</string>
   <string name="SYS_SEND_MAIL_TO_ROLE">Die E-Mail wird an alle Mitglieder der ausgewählten Rolle gesendet. Weitere Rollen und Empfänger:innen sind für eingeloggte Benutzerinnen und Benutzer verfügbar.</string>
@@ -1526,6 +1541,8 @@
   <string name="SYS_SSO">Single-Sign-On</string>
   <string name="SYS_SSO_ACS_URL">ACS URL</string>
   <string name="SYS_SSO_ACS_URL_DESC">Die URL des Assertion Consumer Servicer (ACS) ist der Haupteinstiegspunkt für den Client. Nach erfolgreicher Anmeldung bei Admidio wird der Benutzer zu dieser URL weitergeleitet und am Client angemeldet.</string>
+  <string name="SYS_SSO_ALLOW_PRIVATE_NETWORK">Anfragen ins lokale Netzwerk erlauben</string>
+  <string name="SYS_SSO_ALLOW_PRIVATE_NETWORK_DESC">Serverseitige SSO-Anfragen (Abruf der Metadaten, Back-Channel-Logout) dürfen standardmäßig nur an öffentliche HTTPS-Adressen gehen. Aktivieren Sie dies nur, wenn ein Service Provider ausschließlich unter einer privaten Adresse im eigenen Netzwerk erreichbar ist.</string>
   <string name="SYS_SSO_ATTRIBUTE">Name des SSO-Attributs</string>
   <string name="SYS_SSO_ATTRIBUTES">Enthaltene Benutzer:innne-Attribute</string>
   <string name="SYS_SSO_ATTRIBUTES_ALLOTHER">Alle verbleibenden Felder mit dem internen Feldnamen von Admidio einschließen</string>
@@ -1560,6 +1577,7 @@
   <string name="SYS_SSO_EDIT_SAML_CLIENT">SAML Client (Service Provider) bearbeiten</string>
   <string name="SYS_SSO_ENCRYPT_ASSERTIONS">Verschlüsselung der an den Client gesendeten Assertions (SP)</string>
   <string name="SYS_SSO_ENCRYPTION_KEY">Schlüssel für Verschlüsselung</string>
+  <string name="SYS_SSO_EXPLANATION">Als Identity Provider ermöglicht es Admidio, dass sich Benutzer:innen mit ihrem Admidio-Account bei anderen Webanwendungen anmelden. Unterstützt werden die Protokolle SAML 2.0 und OpenID Connect (OIDC).</string>
   <string name="SYS_SSO_EXPORT_PASSWORD">Passwort für den Schlüsselexport</string>
   <string name="SYS_SSO_EXPORT_PASSWORD_DESC">Der exportierte private Schlüssel und das Zertifikat können und sollen aus Sicherheitsgründen mit einem Passwort verschlüsselt werden. Dieses Kennwort ist erforderlich, um die heruntergeladene Datei zu öffnen oder zu importieren. Ohne dieses Kennwort kann der Schlüssel nicht aus der Datei wiederhergestellt werden. Die Verwendung eines leeren Passworts ist möglich, wird aber dringend abgeraten!</string>
   <string name="SYS_SSO_INVALID_CLIENT">Ungültiger Client</string>
@@ -1621,7 +1639,7 @@
   <string name="SYS_SSO_SAML_ALLOWED_CLOCK_SKEW_DESC">SAML und die Gültigkeit der Anmeldung hängen auch von synchronisierten Uhren ab, um die Berechtigungen zu begrenzen. Da einige Systeme einen leichten Zeitunterschied aufweisen können, bietet diese Einstellung eine Möglichkeit, bestimmte Zeitunterschiede zuzulassen.</string>
   <string name="SYS_SSO_SAML_ASSERTION_LIFETIME">Lebensdauer der an den Client gesendeten SAML-Assertions</string>
   <string name="SYS_SSO_SAML_ASSERTION_LIFETIME_DESC">Nach erfolgreicher Authentifizierung wird eine „Bestätigung“ an den Client gesendet. Diese Konfiguration legt fest, wie lange (in Sekunden) diese Bestätigung vom Client als gültig angesehen werden soll.</string>
-  <string name="SYS_SSO_SAML_ENABLED">Single-Sign-On über SAML2.0 aktivieren</string>
+  <string name="SYS_SSO_SAML_ENABLED">Single-Sign-On über SAML 2.0 aktivieren</string>
   <string name="SYS_SSO_SAML_ENABLED_DESC">Diese Einstellung macht Admidio zu einem SAML 2.0 Identity Provider (idP) für Single-Sign-On, der es anderen Webanwendungen ermöglicht, Benutzer gegenüber der Admidio-Benutzerliste zu authentifizieren.</string>
   <string name="SYS_SSO_SAML_ENCRYPTION_KEY_MISSING">SAML-Nachricht muss verschlüsselt werden, aber der Client (SP) hat kein Zertifikat konfiguriert.</string>
   <string name="SYS_SSO_SAML_ENTITY_ID">SAML-Entity-ID</string>
@@ -1633,7 +1651,8 @@
   <string name="SYS_SSO_SAML_SIGNATURE_MISSING">In der SAML-Nachricht fehlt eine kryptografische Signatur.</string>
   <string name="SYS_SSO_SAML_SLO_ENDPOINT">SLO-Endpunkt</string>
   <string name="SYS_SSO_SAML_SSO_ENDPOINT">SSO-Endpunkt</string>
-  <string name="SYS_SSO_SAML_WANT_REQUESTS_SIGNED">Unterschriften auf allen eingegangenen Anfragen verlangen</string>
+  <string name="SYS_SSO_SAML_WANT_REQUESTS_SIGNED">Signierte Authentifizierungsanfragen verlangen, sofern der Client signieren kann</string>
+  <string name="SYS_SSO_SAML_WANT_REQUESTS_SIGNED_DESC">Gilt für alle Clients mit hinterlegtem Zertifikat, denn nur damit lässt sich eine Signatur prüfen. Clients ohne Zertifikat sind nicht betroffen. Um von einem einzelnen Client trotzdem eine Signatur zu verlangen, verwenden Sie die Einstellung dieses Clients.</string>
   <string name="SYS_SSO_SIGN_ASSERTIONS">Signieren von Assertions, die an den Client gesendet werden (SP)</string>
   <string name="SYS_SSO_SIGNATURE_ENCRYPTION">Signatur und Verschlüsselung</string>
   <string name="SYS_SSO_SIGNING_KEY">Schlüssel für Signaturen</string>
@@ -1655,6 +1674,7 @@
   <string name="SYS_STILL_X_CHARACTERS">noch #VAR1# Zeichen</string>
   <string name="SYS_STREET">Straße</string>
   <string name="SYS_SUBJECT">Betreff</string>
+  <string name="SYS_SUBSCRIBE">Abonnieren</string>
   <string name="SYS_SUBORDINATE_ORGANIZATIONS">Unterorganisationen</string>
   <string name="SYS_SUBORDINATE_ORGANIZATIONS_DESC">Unterorganisationen können Profildaten von Kontakten gemeinsam nutzen. In einigen Modulen (Ankündigungen, Veranstaltungen) ist es möglich, Einträge aus der Hauptorganisation in den Unterorganisationen anzuzeigen. Die Verwaltung einer Unterorganisation ist völlig eigenständig und kann mit einem eigenen Rechtekonzept versehen werden. Weitere Informationen finden Sie im #VAR1#Admidio Wiki#VAR2#.</string>
   <string name="SYS_SUNDAY">Sonntag</string>

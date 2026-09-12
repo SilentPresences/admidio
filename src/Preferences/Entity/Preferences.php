@@ -4,6 +4,8 @@ namespace Admidio\Preferences\Entity;
 use Admidio\Infrastructure\Entity\Entity;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Exception;
+use Admidio\Changelog\Entity\LogChanges;
+use Admidio\Preferences\Service\PreferenceDefinitions;
 
 /**
  * @brief Class manages access to database table adm_preferences
@@ -42,4 +44,25 @@ class Preferences extends Entity
     {
         return array_merge(parent::getIgnoredLogColumns(), ['prf_name', 'prf_org_id']);
     }
+    /**
+     * Mask sensitive values of certain preference in the ChangeLog
+     */
+    protected function adjustLogEntry(LogChanges $logEntry): void
+    {
+        parent::adjustLogEntry($logEntry);
+
+        if ($logEntry->getValue('log_field') !== 'prf_value') {
+            return;
+        }
+
+        // Sensitivity is part of the canonical core preference definition. Unknown/plugin
+        // preferences keep their existing changelog behavior because their contract is not owned here.
+        $preferenceName = (string)$this->getValue('prf_name');
+        if (PreferenceDefinitions::exists($preferenceName)
+            && PreferenceDefinitions::isSensitive($preferenceName)) {
+            $logEntry->setValue('log_value_old', '********');
+            $logEntry->setValue('log_value_new', '********');
+        }
+    }
+
 }

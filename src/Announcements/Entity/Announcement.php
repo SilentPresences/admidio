@@ -59,6 +59,15 @@ class Announcement extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'announcement';
+    }
+
+    /**
      * Get the value of a column of the database table.
      * If the value was manipulated before with **setValue** then the manipulated value is returned.
      * @param string $columnName The name of the database column whose value should be read
@@ -141,6 +150,32 @@ class Announcement extends Entity
     }
 
     /**
+     * Reads a record out of the table in database selected by the conditions of the param **$sqlWhereCondition** out
+     * of the table. If the SQL find more than one record the method returns **false**. Per default all columns of the
+     * default table will be read and stored in the object. Only announcements of the current organization will be read.
+     * If the announcement belongs to another organization than an exception will be thrown.
+     * @param string $sqlWhereCondition Conditions for the table to select one record
+     * @param array<int,mixed> $queryParams The query params for the prepared statement
+     * @return bool Returns **true** if one record is found
+     * @throws Exception
+     * @see Entity#readDataByUuid
+     * @see Entity#readDataByColumns
+     * @see Entity#readDataById
+     */
+    protected function readData(string $sqlWhereCondition, array $queryParams = array()): bool
+    {
+        if (parent::readData($sqlWhereCondition, $queryParams)) {
+            // check if announcement belongs to this organization
+            if ($this->getValue('cat_org_id') > 0 && $this->getValue('cat_org_id') !== $GLOBALS['gCurrentOrgId']) {
+                throw new Exception('Announcement ' . $this->getValue('ann_uuid') . ' belongs to another organization.');
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Save all changed columns of the recordset in table of database. Therefore, the class remembers if it's
      * a new record or if only an update is necessary. The update statement will only update the changed columns.
      * If the table has columns for creator or editor than these column with their timestamp will be updated.
@@ -157,7 +192,16 @@ class Announcement extends Entity
             throw new Exception('Announcement could not be saved because you are not allowed to edit announcements of this category.');
         }
 
-        return parent::save($updateFingerPrint);
+        $returnCode = parent::save($updateFingerPrint);
+        if ($returnCode) {
+            // Refresh the joined category columns used by isVisible() and isEditable().
+            // Reading the record back clears the inserted state, which sendNotification() needs.
+            $inserted = $this->wasInserted();
+            $this->readDataById((int) $this->getValue('ann_id'));
+            $this->insertedRecord = $inserted;
+        }
+
+        return $returnCode;
     }
 
     /**
@@ -176,7 +220,7 @@ class Announcement extends Entity
         if ($gSettingsManager->getBool('system_notifications_new_entries')) {
             $notification = new Email();
 
-            if ($this->isNewRecord()) {
+            if ($this->wasInserted()) {
                 $messageTitleText = 'SYS_ANNOUNCEMENT_CREATED_TITLE';
                 $messageUserText = 'SYS_CREATED_BY';
                 $messageDateText = 'SYS_CREATED_AT';

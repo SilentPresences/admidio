@@ -3,7 +3,6 @@ namespace Admidio\UI\Presenter;
 
 use Admidio\Infrastructure\Exception;
 use Admidio\Infrastructure\Language;
-use Admidio\SSO\Entity\Key;
 use Admidio\SSO\Service\KeyService;
 use Admidio\Infrastructure\Utils\SecurityUtils;
 use Admidio\Changelog\Service\ChangelogService;
@@ -121,10 +120,12 @@ class SSOKeyPresenter extends PagePresenter
             }
         </style>");
 
-        // create SAML client object
-        $key = new Key($gDb);
-        if (!empty($this->keyUUID)) {
-            $key->readDataByUuid($this->keyUUID);
+        // create organization-scoped cryptographic key object
+        $keyService = new KeyService($gDb);
+        $key = $keyService->createKeyObject($this->keyUUID);
+
+        if (!empty($this->keyUUID) && $key->isNewRecord()) {
+            throw new Exception('SYS_SSO_KEY_NOT_FOUND');
         }
 
         $haveKey = !$key->isNewRecord();
@@ -133,7 +134,7 @@ class SSOKeyPresenter extends PagePresenter
         } else {
             $this->setHeadline($gL10n->get('SYS_CREATE_VAR', array($gL10n->get('SYS_SSO_KEY'))));
         }
-        $this->setHtmlID('admidio-saml-client-edit');
+        $this->setHtmlID('adm_sso_key_edit');
 
         ChangelogService::displayHistoryButton($this, 'sso-key', 'sso_keys', !empty($this->keyUUID), array('uuid' => $this->keyUUID));
 
@@ -209,22 +210,22 @@ class SSOKeyPresenter extends PagePresenter
                 'countryName' => '',
                 'stateOrProvinceName' => '',
                 'localityName' => '',
-                'organizationName' => $gCurrentOrganization->getValue('org_longname'),
+                'organizationName' => $gCurrentOrganization->getValue('org_longname') ?? '',
                 'organizationalUnitName' => '',
                 'commonName' => ADMIDIO_URL,
-                'email' => $gCurrentOrganization->getValue('org_email_administrator'),
+                'email' => $gCurrentOrganization->getValue('org_email_administrator') ?? '',
                 'validTo' => $expirationTS->format($dateFormat)
             );
         } else {
             $expirationTS = $key->getValue('key_expires_at', $dateFormat);
             $certData = array(
-                'countryName' => $cert['subject']['C'],
-                'stateOrProvinceName' => $cert['subject']['ST'],
-                'localityName' => $cert['subject']['L'],
-                'organizationName' => $cert['subject']['O'],
-                'organizationalUnitName' => $cert['subject']['OU'],
-                'commonName' => $cert['subject']['CN'],
-                'email' => $cert['subject']['emailAddress'],
+                'countryName' => $cert['subject']['C'] ?? '',
+                'stateOrProvinceName' => $cert['subject']['ST'] ?? '',
+                'localityName' => $cert['subject']['L'] ?? '',
+                'organizationName' => $cert['subject']['O'] ?? '',
+                'organizationalUnitName' => $cert['subject']['OU'] ?? '',
+                'commonName' => $cert['subject']['CN'] ?? '',
+                'email' => $cert['subject']['emailAddress'] ?? '',
                 'validTo' => $expirationTS
             );
         }

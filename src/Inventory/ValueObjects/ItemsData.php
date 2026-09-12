@@ -15,6 +15,8 @@ use Admidio\Inventory\Entity\ItemData;
 use Admidio\Inventory\Entity\ItemField;
 use Admidio\Inventory\Entity\ItemBorrowData;
 use Admidio\Categories\Entity\Category;
+use Admidio\Changelog\Entity\LogChanges;
+use Admidio\Changelog\Service\ChangelogService;
 use Admidio\Inventory\Entity\SelectOptions;
 
 // PHP namespaces
@@ -120,6 +122,30 @@ class ItemsData
     }
 
     /**
+     * Check if the current user is authorized to edit specific item data
+     *
+     * @return bool            true if the user is authorized
+     * @throws Exception
+     */
+    public function isEditable(): bool
+    {
+        global $gSettingsManager, $gCurrentUser;
+
+        $keeper = $this->getValue('KEEPER', 'database');
+        // check if the user has admin rights
+        if ($gCurrentUser->isAdministratorInventory()) {
+            return true;
+        }
+        // if user has no amin rights, check if user is keeper of the item and if keepers are allowed to edit the item
+        elseif ($gSettingsManager->getInt('inventory_module_enabled') !== 3 && $gSettingsManager->getBool('inventory_allow_keeper_edit')) {
+            if ($keeper === $gCurrentUser->getValue('usr_id')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Item data of all item fields will be initialized
      * the fields array will not be renewed
      *
@@ -199,7 +225,9 @@ class ItemsData
 
             while ($row = $itemDataStatement->fetch()) {
                 if (!array_key_exists($row['ind_inf_id'], $this->mItemData)) {
-                    $this->mItemData[$row['ind_inf_id']] = new ItemData($this->mDb, $this, $row['ind_inf_id']);
+                    // The entities are indexed by the item field, but they are loaded by their own
+                    // key column ind_id. Passing ind_inf_id here reads an unrelated data row.
+                    $this->mItemData[$row['ind_inf_id']] = new ItemData($this->mDb, $this, (int)$row['ind_id']);
                 }
                 $this->mItemData[$row['ind_inf_id']]->setArray($row);
             }
@@ -214,15 +242,20 @@ class ItemsData
 
             while ($row = $itemBorrowStatement->fetch()) {
                 foreach ($this->getItemFields() as $itemField) {
-                    $itemBorrowData = new ItemBorrowData($this->mDb, $this, $row['inb_ini_id']);
                     $fieldNameIntern = $itemField->getValue('inf_name_intern');
-                    $fieldId = $itemField->getValue('inf_id');
-                    if (in_array($fieldNameIntern, $this->borrowFieldNames)) {
-                        if (!array_key_exists($fieldId, $this->mItemData)) {
-                            $this->mItemData[$fieldId] = $itemBorrowData;
-                        }
-                        $this->mItemData[$fieldId]->setArray($row);
+                    if (!in_array($fieldNameIntern, $this->borrowFieldNames)) {
+                        continue;
                     }
+                    $fieldId = $itemField->getValue('inf_id');
+                    if (!array_key_exists($fieldId, $this->mItemData)) {
+                        // Same as above: the entity is loaded by its own key column inb_id.
+                        // inb_ini_id is the item the borrow data belongs to and would read an
+                        // unrelated row. The object is only built for the borrow fields and only
+                        // when it is really needed, because the constructor clones this object
+                        // and reads from the database.
+                        $this->mItemData[$fieldId] = new ItemBorrowData($this->mDb, $this, (int)$row['inb_id']);
+                    }
+                    $this->mItemData[$fieldId]->setArray($row);
                 }
             }
         } else {
@@ -469,6 +502,46 @@ class ItemsData
                 JOIN ' . TBL_USER_DATA . ' as last_name ON last_name.usd_usr_id = usr_id AND last_name.usd_usf_id = ' . $gProfileFields->getProperty('LAST_NAME', 'usf_id') . '
                 JOIN ' . TBL_USER_DATA . ' as first_name ON first_name.usd_usr_id = usr_id AND first_name.usd_usf_id = ' . $gProfileFields->getProperty('FIRST_NAME', 'usf_id') . '
                 WHERE usr_valid = true AND EXISTS (SELECT 1 FROM ' . TBL_MEMBERS . ', ' . TBL_ROLES . ', ' . TBL_CATEGORIES . ' WHERE mem_usr_id = usr_id AND mem_rol_id = rol_id AND mem_begin <= \'' . DATE_NOW . '\' AND mem_end > \'' . DATE_NOW . '\' AND rol_valid = true AND rol_cat_id = cat_id AND (cat_org_id = ' . $gCurrentOrgId . ' OR cat_org_id IS NULL)) ORDER BY last_name.usd_value, first_name.usd_value;';
+    }
+
+    /**
+     * Item field types whose value is stored as the id(s) of the selected option(s).
+     * @var array
+     */
+    protected static array $selectFieldTypes = array('DROPDOWN', 'DROPDOWN_MULTISELECT', 'DROPDOWN_DATE_INTERVAL', 'RADIO_BUTTON');
+
+    /**
+     * Format a value of the changelog with the definition of the item field it belongs to. This is
+     * the counterpart of the user profile fields, whose values are formatted with the profile field
+     * definition. The changelog itself has no knowledge of the item fields, so it delegates here.
+     *
+     * @param int|string $field The item field the value belongs to, either its inf_id (as stored in
+     *                          log_field for the item data table) or its internal name
+     * @param string|null $value The value as it is stored in the changelog
+     * @return string Returns the formatted and html encoded value
+     * @throws Exception
+     */
+    public function formatChangelogValue(int|string $field, ?string $value): string
+    {
+        $fieldNameIntern = is_int($field) ? $this->getPropertyById($field, 'inf_name_intern') : $field;
+
+        // getHtmlValue() returns the value of text based fields unchanged, so the raw database
+        // value has to be encoded before it is formatted.
+        $value = (string)ChangelogService::formatValue($value, '');
+
+        // The keeper and the last receiver of an item are stored as the id of the user
+        if (in_array($fieldNameIntern, array('KEEPER', 'LAST_RECEIVER'), true) && is_numeric($value)) {
+            return (string)ChangelogService::formatValue($value, 'USER');
+        }
+
+        // Entries that were written before the raw database value was logged already contain the
+        // text of the selected option instead of its id and are therefore displayed unchanged.
+        if (in_array($this->getProperty($fieldNameIntern, 'inf_type'), self::$selectFieldTypes, true)
+            && preg_match('/^\d+(\s*,\s*\d+)*$/', $value) !== 1) {
+            return $value;
+        }
+
+        return $this->getHtmlValue($fieldNameIntern, $value);
     }
 
     /**
@@ -926,6 +999,11 @@ class ItemsData
     {
         global $gSettingsManager;
 
+        // check if the current user is authorized to edit the item
+        if (!$this->isEditable()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         $infId = $this->mItemFields[$fieldNameIntern]->getValue('inf_id');
         $oldFieldValue = '';
         // default prefix is 'ind_' for item data
@@ -1026,6 +1104,13 @@ class ItemsData
      */
     public function createNewItem(string $catUUID): void
     {
+        global $gCurrentUser;
+
+        // check if user has admin rights for inventory
+        if (!$gCurrentUser->isAdministratorInventory()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         // If an error occurred while generating an item, there is an ItemId but no data for that item.
         // the following routine deletes these unused ItemIds
         $sql = 'SELECT * FROM ' . TBL_INVENTORY_ITEMS . '
@@ -1077,19 +1162,47 @@ class ItemsData
      */
     public function deleteItem(): void
     {
-        // Log record deletion, then delete
-        $item = new Item($this->mDb, $this, $this->mItemId);
-        $item->logDeletion();
+        // check if the current user is authorized to edit the item
+        if (!$this->isEditable()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
 
-        // delete all item data
+        // Deleting an item is one action of the user, so the item and its data belong into one
+        // change set of the changelog.
+        $previousChangeSet = LogChanges::startChangeSet();
+
+        $item = new Item($this->mDb, $this, $this->mItemId);
+
+        // delete all item data. The values are logged and reported to the persistence hooks before
+        // they are removed, a plain DELETE would take them out of the change history and out of the
+        // hook API without a trace - the same reason Entity::deleteDependentRecords() calls both.
+        // This class is not an Entity subclass, so it calls logBulkDeletion() and hookBulkDeletion()
+        // itself instead of going through that helper.
+        $itemData = new ItemData($this->mDb, $this);
+        $itemData->logBulkDeletion(array('ind_id'), 'ind_ini_id = ?', array($this->mItemId));
+        $itemData->hookBulkDeletion('ind_ini_id = ?', array($this->mItemId), $item);
         $sql = 'DELETE FROM ' . TBL_INVENTORY_ITEM_DATA . ' WHERE ind_ini_id = ?;';
         $this->mDb->queryPrepared($sql, array($this->mItemId));
+
         // delete all item borrow data
+        $itemBorrowData = new ItemBorrowData($this->mDb, $this);
+        $itemBorrowData->logBulkDeletion(array('inb_id'), 'inb_ini_id = ?', array($this->mItemId));
+        $itemBorrowData->hookBulkDeletion('inb_ini_id = ?', array($this->mItemId), $item);
         $sql = 'DELETE FROM ' . TBL_INVENTORY_ITEM_BORROW_DATA . ' WHERE inb_ini_id = ?;';
         $this->mDb->queryPrepared($sql, array($this->mItemId));
-        // delete item
+
+        // Log and delete the item itself last. The change history shows a change with the record it
+        // is about, and it recognizes that record as the entry that a deletion logs last.
+        // hookBulkDeletion() is used instead of $item->delete() so that the exact WHERE condition -
+        // including the organization guard - is the one that decides what is actually deleted; it
+        // dispatches the same inventory_item_deleting / inventory_item_deleted as delete() would.
+        $item->logDeletion();
+        $item->hookBulkDeletion('ini_id = ? AND (ini_org_id = ? OR ini_org_id IS NULL)', array($this->mItemId, $this->organizationId));
+
         $sql = 'DELETE FROM ' . TBL_INVENTORY_ITEMS . ' WHERE ini_id = ? AND (ini_org_id = ? OR ini_org_id IS NULL);';
         $this->mDb->queryPrepared($sql, array($this->mItemId, $this->organizationId));
+
+        LogChanges::endChangeSet($previousChangeSet);
 
         $this->mItemDeleted = true;
     }
@@ -1102,6 +1215,11 @@ class ItemsData
      */
     public function retireItem(): void
     {
+        // check if the current user is authorized to edit the item
+        if (!$this->isEditable()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         // get the option id of the retired status
         $option = new SelectOptions($this->mDb, $this->getProperty('STATUS', 'inf_id'));
         $values = $option->getAllOptions();
@@ -1129,6 +1247,11 @@ class ItemsData
      */
     public function reinstateItem(): void
     {
+        // check if the current user is authorized to edit the item
+        if (!$this->isEditable()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         // get the option id of the in use status
         $option = new SelectOptions($this->mDb, $this->getProperty('STATUS', 'inf_id'));
         $values = $option->getAllOptions();
@@ -1156,6 +1279,11 @@ class ItemsData
      */
     public function saveItemData(): void
     {
+        // check if the current user is authorized to edit the item
+        if (!$this->isEditable()) {
+            throw new Exception('SYS_NO_RIGHTS');
+        }
+
         global $gCurrentUser;
         $this->mDb->startTransaction();
         $inbId = 0; // used for item borrow data
@@ -1203,6 +1331,14 @@ class ItemsData
             $updateItem = new Item($this->mDb, $this, $this->mItemId);
             $updateItem->setValue('ini_usr_id_change', $gCurrentUser->getValue('usr_id'), false);
             $updateItem->save();
+        }
+
+        // The item record has to be created before its data rows can be written, so the item name
+        // was not yet known when the record was inserted and neither its creation nor the values
+        // it was created with could be logged. Now that the item data is saved, log them.
+        if ($this->mItemCreated) {
+            $newItem = new Item($this->mDb, $this, $this->mItemId);
+            $newItem->logPostponedCreation();
         }
 
         $this->columnsValueChanged = false;

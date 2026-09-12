@@ -2,6 +2,9 @@
 namespace Admidio\ProfileFields\Entity;
 
 use Admidio\ProfileFields\Entity\SelectOptions;
+use Admidio\Changelog\Entity\LogChanges;
+use Admidio\Roles\Entity\ListColumns;
+use Admidio\Users\Entity\UserData;
 use Admidio\Categories\Entity\Category;
 use Admidio\Infrastructure\Database;
 use Admidio\Infrastructure\Image;
@@ -52,6 +55,15 @@ class ProfileField extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'profile_field';
+    }
+
+    /**
      * Additional to the parent method visible roles array and flag will be initialized.
      * @throws Exception
      */
@@ -80,6 +92,10 @@ class ProfileField extends Entity
 
         $this->db->startTransaction();
 
+        // Deleting a profile field is one action of the user, so the field and every value that is
+        // removed with it belong into one change set of the changelog.
+        $previousChangeSet = LogChanges::startChangeSet();
+
         // close gap in sequence
         $sql = 'UPDATE ' . TBL_USER_FIELDS . '
                    SET usf_sequence = usf_sequence - 1
@@ -104,21 +120,32 @@ class ProfileField extends Entity
         }
 
         // delete all dependencies in other tables, except for the changelog (which needs to be audit proof)
-        $sql = 'DELETE FROM ' . TBL_USER_DATA . '
-                 WHERE usd_usf_id = ? -- $usfId';
-        $this->db->queryPrepared($sql, array($usfId));
+        $this->deleteDependentRecords(
+            new UserData($this->db),
+            array('usd_id'),
+            'usd_usf_id = ?',
+            array($usfId)
+        );
 
-        $sql = 'DELETE FROM ' . TBL_LIST_COLUMNS . '
-                 WHERE lsc_usf_id = ? -- $usfId';
-        $this->db->queryPrepared($sql, array($usfId));
+        $this->deleteDependentRecords(
+            new ListColumns($this->db),
+            array('lsc_id'),
+            'lsc_usf_id = ?',
+            array($usfId)
+        );
 
-        $sql = 'DELETE FROM ' . TBL_USER_FIELD_OPTIONS . '
-                 WHERE ufo_usf_id = ? -- $usfId';
-        $this->db->queryPrepared($sql, array($usfId));
+        $this->deleteDependentRecords(
+            new SelectOptions($this->db, $usfId),
+            array('ufo_id'),
+            'ufo_usf_id = ?',
+            array($usfId)
+        );
 
         $return = parent::delete();
 
-        if (is_object($gCurrentSession)) {
+        LogChanges::endChangeSet($previousChangeSet);
+
+        if (isset($gCurrentSession) && is_object($gCurrentSession)) {
             // all active users must renew their user data because the user field structure has been changed
             $gCurrentSession->reloadAllSessions();
         }
@@ -147,7 +174,7 @@ class ProfileField extends Entity
 
         $sql = 'SELECT usf_id
                   FROM ' . TBL_USER_FIELDS . '
-                 WHERE usf_name_intern = ? -- $newNameIntern';
+                 WHERE UPPER(usf_name_intern) = UPPER(?) -- $newNameIntern';
         $userFieldsStatement = $this->db->queryPrepared($sql, array($newNameIntern));
 
         if ($userFieldsStatement->rowCount() > 0) {

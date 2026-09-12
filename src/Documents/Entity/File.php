@@ -39,6 +39,15 @@ class File extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'file';
+    }
+
+    /**
      * Check if the file extension of the current file format is allowed for upload and the
      * documents and files module.
      * @return bool Return true if the file extension is allowed to be used within Admidio.
@@ -239,11 +248,12 @@ class File extends Entity
         }
 
         $returnCode = parent::save($updateFingerPrint);
+        $inserted = $this->wasInserted();
 
         // read data to fill folder information to the object
-        if ($this->newRecord) {
+        if ($inserted) {
             $this->readDataById($this->getValue('fil_id'));
-            $this->newRecord = true;
+            $this->insertedRecord = true;
         }
 
         return $returnCode;
@@ -307,7 +317,7 @@ class File extends Entity
      *
      * @return void
      */
-    protected function adjustLogEntry(LogChanges $logEntry) {
+    protected function adjustLogEntry(LogChanges $logEntry): void {
         $folEntry = new Folder($this->db, $this->getValue('fil_fol_id'));
         $logEntry->setLogRelated($folEntry->getValue('fol_uuid'), $folEntry->getValue('fol_name'));
     }

@@ -65,6 +65,15 @@ class Category extends Entity
     }
 
     /**
+     * @return string|null Returns the hook ID of this entity.
+     * @see Entity::getHookId()
+     */
+    public function getHookId(): ?string
+    {
+        return 'category';
+    }
+
+    /**
      * Deletes the selected record of the table and all references in other tables.
      * After that the class will be initialized. The method throws exceptions if
      * the category couldn't be deleted.
@@ -76,7 +85,7 @@ class Category extends Entity
      */
     public function delete(): bool
     {
-        global $gCurrentSession;
+        global $gCurrentSession, $gCurrentOrgId;
 
         // system-category couldn't be deleted
         if ((int) $this->getValue('cat_system') === 1) {
@@ -89,7 +98,8 @@ class Category extends Entity
                  WHERE (  cat_org_id = ? -- $gCurrentSession->getValue(\'ses_org_id\')
                        OR cat_org_id IS NULL )
                    AND cat_type = ? -- $this->getValue(\'cat_type\')';
-        $categoriesStatement = $this->db->queryPrepared($sql, array((int) $gCurrentSession->getValue('ses_org_id'), $this->getValue('cat_type')));
+        $organizationId = isset($gCurrentSession) ? (int) $gCurrentSession->getValue('ses_org_id') : (int) ($gCurrentOrgId ?? 0);
+        $categoriesStatement = $this->db->queryPrepared($sql, array($organizationId, $this->getValue('cat_type')));
 
         // Don't delete the last category of a type!
         if ((int) $categoriesStatement->fetchColumn() === 1) {
@@ -105,7 +115,7 @@ class Category extends Entity
                        OR cat_org_id IS NULL )
                    AND cat_sequence > ? -- $this->getValue(\'cat_sequence\')
                    AND cat_type     = ? -- $this->getValue(\'cat_type\')';
-        $queryParams = array((int) $gCurrentSession->getValue('ses_org_id'), (int) $this->getValue('cat_sequence'), $this->getValue('cat_type'));
+        $queryParams = array($organizationId, (int) $this->getValue('cat_sequence'), $this->getValue('cat_type'));
         $this->db->queryPrepared($sql, $queryParams);
 
         $catId = (int) $this->getValue('cat_id');
@@ -151,7 +161,7 @@ class Category extends Entity
 
         $sql = 'SELECT cat_id
                   FROM '.TBL_CATEGORIES.'
-                 WHERE cat_name_intern = ? -- $newNameIntern';
+                 WHERE UPPER(cat_name_intern) = UPPER(?) -- $newNameIntern';
         $categoriesStatement = $this->db->queryPrepared($sql, array($newNameIntern));
 
         if ($categoriesStatement->rowCount() > 0) {
