@@ -50,6 +50,5 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            admidio/admidio:${{ env.RELEASE_TAG }}
-            admidio/admidio:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
