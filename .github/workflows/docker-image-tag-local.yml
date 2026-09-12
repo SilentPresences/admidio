@@ -7,6 +7,9 @@ on:
         description: 'Git Tag (z. B. v5.0.3)'
         required: true
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   build:
     runs-on: ubuntu-latest
