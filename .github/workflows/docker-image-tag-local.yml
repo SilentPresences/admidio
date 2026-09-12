@@ -1,4 +1,4 @@
-name: Docker Multi-Arch Build on Manual Tag
+name: Docker Multi-Arch Build on Manual Tag -> LOCAL
 
 on:
   workflow_dispatch:
