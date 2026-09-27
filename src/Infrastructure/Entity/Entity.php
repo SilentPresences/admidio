@@ -183,6 +183,7 @@ class Entity
      * @param string $table Database table name that should be connected.
      * @param string $columnNameAdditionalTable Name of the column in the connected table that has the foreign key to the class table
      * @param string $columnNameClassTable Name of the column in the class table that has the foreign key to the connected table
+     * @throws Exception
      *
      * **Code example**
      * ```
@@ -201,6 +202,13 @@ class Entity
             'columnNameAdditionalTable' => $columnNameAdditionalTable,
             'columnNameClassTable' => $columnNameClassTable
         );
+
+        // An additional table can also be connected after the entity was initialized.
+        // In this case, load its column metadata immediately so readData() can process
+        // the additional columns as well.
+        if (count($this->columnsInfos) > 0) {
+            $this->setColumnsInfosForTable($table);
+        }
     }
 
     /**
@@ -1013,7 +1021,8 @@ class Entity
      * If the value was manipulated before with **setValue** then the manipulated value is returned.
      * @param string $columnName The name of the database column whose value should be read
      * @param string $format For date or timestamp columns, the format should be the date/time format e.g. **d.m.Y = '02.04.2011'**.
-     *                           For text columns, the format can be **database** that would return the original database value without any transformations
+     *                           For text, date, time and timestamp columns, the format **database** returns the
+     *                           original database value without any transformation (e.g. a date as **Y-m-d**).
      * @return mixed Returns the value of the database column.
      *               If the value was manipulated before with **setValue** then the manipulated value is returned.
      * @throws Exception
@@ -1071,6 +1080,13 @@ class Entity
                 case 'date': // fallthrough
                 case 'time':
                     if (isset($columnValue) && $columnValue !== '') {
+                        if ($format === 'database') {
+                            // the value exactly as the database holds it, e.g. a date as Y-m-d, for a
+                            // comparison or a re-insert - never run through DateTime::format().
+                            $columnValue = $this->dbColumns[$columnName];
+                            break;
+                        }
+
                         if ($format === '' && isset($gSettingsManager)) {
                             if (str_contains($this->columnsInfos[$columnName]['type'], 'timestamp')) {
                                 $format = $gSettingsManager->getString('system_date') . ' ' . $gSettingsManager->getString('system_time');
@@ -1676,32 +1692,43 @@ class Entity
         }
 
         foreach ($tables as $table) {
-            $tableColumnsProperties = $this->db->getTableColumnsProperties($table);
+            $this->setColumnsInfosForTable($table);
+        }
+    }
 
-            foreach ($tableColumnsProperties as $columnName => $property) {
-                // some actions should only be done for columns of the main table from this class
-                if (str_starts_with($columnName, $this->columnPrefix . '_')) {
-                    $this->dbColumns[$columnName] = null;
+    /**
+     * Read and store the metadata of a table used by this entity.
+     * @param string $table Database table name
+     * @return void
+     * @throws Exception
+     */
+    private function setColumnsInfosForTable(string $table): void
+    {
+        $tableColumnsProperties = $this->db->getTableColumnsProperties($table);
 
-                    if ($property['serial']) {
-                        $this->keyColumnName = $columnName;
-                    }
+        foreach ($tableColumnsProperties as $columnName => $property) {
+            // some actions should only be done for columns of the main table from this class
+            if (str_starts_with($columnName, $this->columnPrefix . '_')) {
+                $this->dbColumns[$columnName] = null;
+
+                if ($property['serial']) {
+                    $this->keyColumnName = $columnName;
                 }
-                $this->columnsInfos[$columnName]['changed'] = false;
-                $this->columnsInfos[$columnName]['previousValue'] = null;
-                if (strpos($property['type'], '(') > 0) {
-                    $this->columnsInfos[$columnName]['type'] = substr($property['type'], 0, strpos($property['type'], '('));
-                } else {
-                    $this->columnsInfos[$columnName]['type'] = $property['type'];
-                }
-                $this->columnsInfos[$columnName]['null'] = $property['null'];
-                $this->columnsInfos[$columnName]['key'] = $property['key'];
-                $this->columnsInfos[$columnName]['serial'] = $property['serial'];
-                if (isset($property['default'])) {
-                    $this->columnsInfos[$columnName]['default'] = $property['default'];
-                } elseif ($property['null']) {
-                    $this->columnsInfos[$columnName]['default'] = null;
-                }
+            }
+            $this->columnsInfos[$columnName]['changed'] = false;
+            $this->columnsInfos[$columnName]['previousValue'] = null;
+            if (strpos($property['type'], '(') > 0) {
+                $this->columnsInfos[$columnName]['type'] = substr($property['type'], 0, strpos($property['type'], '('));
+            } else {
+                $this->columnsInfos[$columnName]['type'] = $property['type'];
+            }
+            $this->columnsInfos[$columnName]['null'] = $property['null'];
+            $this->columnsInfos[$columnName]['key'] = $property['key'];
+            $this->columnsInfos[$columnName]['serial'] = $property['serial'];
+            if (isset($property['default'])) {
+                $this->columnsInfos[$columnName]['default'] = $property['default'];
+            } elseif ($property['null']) {
+                $this->columnsInfos[$columnName]['default'] = null;
             }
         }
     }

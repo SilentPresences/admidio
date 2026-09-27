@@ -755,6 +755,12 @@ class PreferencesPresenter extends PagePresenter
             (bool) $formValues['system_browser_update_check'],
             array('helpTextId' => 'ORG_BROWSER_UPDATE_CHECK_DESC')
         );
+        $formCommon->addCheckbox(
+            'system_pwa_enabled',
+            $gL10n->get('SYS_PWA_ENABLED'),
+            (bool) ($formValues['system_pwa_enabled'] ?? true),
+            array('helpTextId' => 'SYS_PWA_ENABLED_DESC')
+        );
         $formCommon->addInput(
             'path_for_calculating_disk_usage',
             $gL10n->get('ORG_PATH_FOR_CALCULATING_DISK_USAGE'),
@@ -1360,11 +1366,11 @@ class PreferencesPresenter extends PagePresenter
             array('class' => 'form-preferences')
         );
         $selectBoxEntries = array('phpmail' => $gL10n->get('SYS_PHP_MAIL'), 'SMTP' => $gL10n->get('SYS_SMTP'));
-        $formEmailDispatch->addSelectBox(
+        $formEmailDispatch->addRadioButton(
             'mail_send_method',
             $gL10n->get('SYS_SEND_METHOD'),
             $selectBoxEntries,
-            array('defaultValue' => $formValues['mail_send_method'], 'showContextDependentFirstEntry' => false, 'helpTextId' => 'SYS_SEND_METHOD_DESC')
+            array('defaultValue' => $formValues['mail_send_method'], 'helpTextId' => 'SYS_SEND_METHOD_DESC')
         );
         $selectBoxEntries = array('1' => $gL10n->get('SYS_SYSTEM_EMAIL_WITH_REPLY_TO'), '2' => $gL10n->get('SYS_SYSTEM_EMAIL'), '3' => $gL10n->get('SYS_USER_EMAIL'));
         $formEmailDispatch->addSelectBox(
@@ -1425,12 +1431,6 @@ class PreferencesPresenter extends PagePresenter
             $formValues['mail_smtp_host'],
             self::preferenceInputOptions('mail_smtp_host', array('helpTextId' => 'SYS_SMTP_HOST_DESC'))
         );
-        $formEmailDispatch->addCheckbox(
-            'mail_smtp_auth',
-            $gL10n->get('SYS_SMTP_AUTH'),
-            (bool) $formValues['mail_smtp_auth'],
-            array('helpTextId' => 'SYS_SMTP_AUTH_DESC')
-        );
         $formEmailDispatch->addInput(
             'mail_smtp_port',
             $gL10n->get('SYS_SMTP_PORT'),
@@ -1439,14 +1439,20 @@ class PreferencesPresenter extends PagePresenter
         );
         $selectBoxEntries = array(
             '' => $gL10n->get('SYS_SMTP_SECURE_NO'),
-            'ssl' => $gL10n->get('SYS_SMTP_SECURE_SSL'),
-            'tls' => $gL10n->get('SYS_SMTP_SECURE_TLS')
+            'tls' => $gL10n->get('SYS_SMTP_SECURE_TLS'),
+            'ssl' => $gL10n->get('SYS_SMTP_SECURE_SSL')
         );
         $formEmailDispatch->addSelectBox(
             'mail_smtp_secure',
             $gL10n->get('SYS_SMTP_SECURE'),
             $selectBoxEntries,
-            array('defaultValue' => $formValues['mail_smtp_secure'], 'showContextDependentFirstEntry' => false, 'helpTextId' => 'SYS_SMTP_SECURE_DESC')
+            array('defaultValue' => $formValues['mail_smtp_secure'], 'showContextDependentFirstEntry' => false, 'helpTextId' => array('SYS_SMTP_SECURE_DESC', array($gL10n->get('SYS_SMTP_SECURE_TLS'))))
+        );
+        $formEmailDispatch->addCheckbox(
+            'mail_smtp_auth',
+            $gL10n->get('SYS_SMTP_AUTH'),
+            (bool) $formValues['mail_smtp_auth'],
+            array('helpTextId' => 'SYS_SMTP_AUTH_DESC')
         );
         $selectBoxEntries = array(
             '' => $gL10n->get('SYS_AUTO_DETECT'),
@@ -2510,8 +2516,8 @@ class PreferencesPresenter extends PagePresenter
         );
 
         $formSSO->addSeparator(
-            'sso_saml_advanced_settings', 
-            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'), 
+            'sso_saml_advanced_settings',
+            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'),
             array('collapse' => "sso_saml_advanced", 'collapsed' => true, 'separator_line' => false, 'class' => 'if-saml-enabled')
         );
 
@@ -2532,14 +2538,14 @@ class PreferencesPresenter extends PagePresenter
         );
 
         // An empty IssuerURL indicates the use of the default admidio base URL
-        // Leave the input box exmpty, but show the default value as 
+        // Leave the input box exmpty, but show the default value as
         // placeholder/hint and copy that value when the copy icon is clicked!
         $defaultIssuerURL = OIDCService::getDefaultIssuerURL();
         $formSSO->addInput(
             'sso_oidc_issuer_url',
             $gL10n->get('SYS_SSO_OIDC_ISSUER_URL'),
             (string)$formValues['sso_oidc_issuer_url'],
-            array('class' => 'copy-container if-oidc-enabled', 
+            array('class' => 'copy-container if-oidc-enabled',
                   'placeholder' => $defaultIssuerURL,
                   'helpTextId' => 'SYS_SSO_OIDC_ISSUER_URL_DESC')
         );
@@ -2560,7 +2566,7 @@ class PreferencesPresenter extends PagePresenter
         $currentOidcKeyId = (int) $formValues['sso_oidc_signing_key'];
         if ($currentOidcKeyId > 0 && !array_key_exists($currentOidcKeyId, $keys)) {
             $keys[$currentOidcKeyId] = $gL10n->get('SYS_SSO_SELECTED_KEY_INVALID');
-        }        
+        }
 
         $formSSO->addSelectBox(
             'sso_oidc_signing_key',
@@ -2633,16 +2639,16 @@ class PreferencesPresenter extends PagePresenter
 
 
         $formSSO->addSeparator(
-            'sso_oidc_advanced_settings', 
-            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'), 
+            'sso_oidc_advanced_settings',
+            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'),
             array('collapse' => "sso_oidc_advanced", 'collapsed' => true, 'separator_line' => false, 'class' => 'if-oidc-enabled')
         );
 
 
 
         $formSSO->addSeparator(
-            'sso_advanced_settings', 
-            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'), 
+            'sso_advanced_settings',
+            $gL10n->get('SYS_SSO_ADVANCED_PROPERTIES'),
             array('collapse' => "sso_advanced_settings_contents", 'collapsed' => true)
         );
         // Applies to both protocols: the metadata request and the OIDC back-channel logout
@@ -3048,8 +3054,6 @@ class PreferencesPresenter extends PagePresenter
                         // Mobile mode
                         $("#collapse_' . $this->preferencesPanelToShow . '").addClass("show").attr("aria-expanded", "true");
                         $("#heading_' . $this->preferencesPanelToShow . ' .accordion-button").removeClass("collapsed").attr("aria-expanded", "true");
-                        // --- Hash setzen, damit Bookmark/Scroll stimmt und zum Element scrollen
-                        location.hash = "#heading_' . $this->preferencesPanelToShow . '";
                     }
                 ', true);
             }

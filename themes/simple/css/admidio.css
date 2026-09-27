@@ -64,6 +64,10 @@
     }
 }
 
+#adm_dropdown_user_photo {
+    min-width: fit-content;
+}
+
 #adm_dropdown_user_photo .dropdown-menu {
     padding: 1rem;
     width: 250px;
@@ -107,12 +111,29 @@
 .admidio-headline-mobile-menu {
     width: 100%;
     font-size: 1.1rem;
-    color: var(--bs-secondary);
+    color: var(--bs-primary);
     letter-spacing: 2px;
 }
 
-.admidio-headline-mobile-menu .btn {
+.admidio-headline-mobile-menu .btn,
+.admidio-headline-mobile-menu .btn:hover,
+.admidio-headline-mobile-menu .btn:focus,
+.admidio-headline-mobile-menu .btn:active {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0;
+    line-height: 1;
+    color: inherit;
+}
+
+.admidio-headline-mobile-menu .btn .bi {
+    margin-right: 0;
+}
+
+.admidio-headline-mobile-menu .bi::before {
+    vertical-align: 0;
+    line-height: 1;
 }
 
 .admidio-menu-list {
@@ -206,6 +227,24 @@ a {
 .btn-outline-primary, .btn-outline-primary:hover {
     color: var(--bs-primary) !important;
     border-color: var(--bs-primary) !important;
+}
+
+/* Use the btn-secondary variables on file inputs for their native buttons. */
+input[type="file"].btn-secondary::file-selector-button {
+    color: var(--bs-btn-color);
+    background-color: var(--bs-btn-bg);
+    border-color: var(--bs-btn-border-color);
+}
+
+input[type="file"].btn-secondary:hover:not(:disabled):not([readonly])::file-selector-button {
+    color: var(--bs-btn-hover-color);
+    background-color: var(--bs-btn-hover-bg);
+    border-color: var(--bs-btn-hover-border-color);
+}
+
+.admidio-attachment-upload button.btn-secondary:hover {
+    background-color: var(--bs-danger);
+    border-color: var(--bs-danger);
 }
 
 .btn-check:checked + .btn {
@@ -530,6 +569,28 @@ label {
 /* Tabs */
 /***********************************/
 
+/* Event fields are shared by desktop tabs and the mobile accordion. */
+@media (min-width: 768px) {
+    .admidio-event-tabs .accordion-item {
+        border: 0;
+    }
+
+    .admidio-event-tabs .accordion-collapse {
+        display: block;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .tabs-x.admidio-event-tabs .tab-content > .tab-pane {
+        display: block;
+    }
+
+    .tabs-x.admidio-event-tabs .tab-content {
+        padding: 0;
+        border: 0;
+    }
+}
+
 .tab-content {
     padding: 1rem 1rem 0 1rem;
 }
@@ -545,7 +606,7 @@ label {
 .accordion {
     --bs-accordion-bg: var(--bs-body-bg);
     --bs-accordion-btn-color: var(--bs-link-color);
-    --bs-accordion-active-color: var(--bs-tertiary);
+    --bs-accordion-active-color: var(--bs-body-color);
     --bs-accordion-active-bg: var(--bs-secondary);
 }
 
